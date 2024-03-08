@@ -1,8 +1,8 @@
-use std::{fs::create_dir, io};
+use std::{error, fs::create_dir, io};
 
 use clap::{arg, command, Parser};
 use libc::pid_t;
-use project::process::Process;
+use project::ptrace::Process;
 
 /// SLSify compute-oriented applications
 #[derive(Parser, Debug)]
@@ -17,7 +17,7 @@ struct Args {
     cpath: String,
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<(), Box<dyn error::Error>> {
     let Args { pid, cpath } = Args::parse();
     match create_dir(cpath) {
         Ok(_) => (),
