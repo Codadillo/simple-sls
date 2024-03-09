@@ -1,7 +1,8 @@
 use std::{
     error::Error,
-    fs::{create_dir, write, File},
+    fs::{create_dir, write, File, OpenOptions},
     io::{Read, Seek, SeekFrom},
+    os::unix::fs::FileExt,
     path::PathBuf,
     time::Duration,
 };
@@ -21,6 +22,7 @@ pub struct Checkpointer {
     pub path: PathBuf,
 
     pub seq: u64,
+    pub seq_file: File,
     pub last_maps: Vec<MemoryMap>,
 }
 
@@ -29,6 +31,26 @@ impl Checkpointer {
         let procfs = Process::new(pid)?;
         let mem_file = procfs.mem()?;
 
+        let mut seq_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(path.join("seq"))?;
+
+        let mut seq_buf = vec![];
+        seq_file.read_to_end(&mut seq_buf)?;
+        let seq = seq_buf
+            .try_into()
+            .map(|b| u64::from_le_bytes(b))
+            .unwrap_or(0);
+
+        let last_maps = if seq != 0 {
+            let map_file = File::open(path.join(seq.to_string()).join("maps"))?;
+            serde_json::from_reader(map_file)?
+        } else {
+            vec![]
+        };
+
         Ok(Self {
             procfs,
             mem_file,
@@ -36,8 +58,9 @@ impl Checkpointer {
             period,
             path,
 
-            seq: 0,
-            last_maps: vec![],
+            seq,
+            seq_file,
+            last_maps,
         })
     }
 
@@ -57,12 +80,13 @@ impl Checkpointer {
 
             for (i, map) in maps.iter().enumerate() {
                 let immutable = !map.perms.contains(MMPermissions::WRITE);
+                let is_file = matches!(map.pathname, MMapPath::Path(_));
 
                 if immutable
-                    && (matches!(map.pathname, MMapPath::Path(_)) || self.last_maps.contains(map))
+                    && (is_file || self.last_maps.contains(map))
                 {
                     debug!(
-                        "ignoring memory region {:x?} @ {:?} due to immutability",
+                        "ignoring memory region {:?} @ {:x?} due to immutability () (is_file = {is_file})",
                         map.pathname, map.address
                     );
                     continue;
@@ -76,7 +100,7 @@ impl Checkpointer {
                 {
                     Err(e) if e.raw_os_error() == Some(5) => {
                         debug!(
-                            "ignoring memory region {:x?} @ {:?} due to read error",
+                            "ignoring memory region {:?} @ {:x?} due to read error",
                             map.pathname, map.address
                         );
                         continue;
@@ -86,6 +110,10 @@ impl Checkpointer {
                     }
                 };
 
+                debug!(
+                    "saving memory rejoin {:?} @ {:x?}",
+                    map.pathname, map.address
+                );
                 mems.push((i, mem));
             }
 
@@ -105,6 +133,7 @@ impl Checkpointer {
             write(cp_dir.join(i.to_string()), mem)?;
         }
 
+        self.seq_file.write_all_at(&self.seq.to_le_bytes(), 0)?;
         self.last_maps = maps.0;
 
         info!("Completed checkpoint");
