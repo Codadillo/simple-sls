@@ -4,20 +4,24 @@ use libc::{
     c_int, kill, pid_t, ptrace, user_fpregs_struct, user_regs_struct, waitpid, PTRACE_ATTACH,
     PTRACE_DETACH, PTRACE_GETFPREGS, PTRACE_GETREGS, SIGCONT, SIGSTOP,
 };
+use serde::{Deserialize, Serialize};
+
+use crate::compat::{UserFpregs, UserRegs};
 
 #[derive(Debug)]
-pub struct Process {
+pub struct PTrace {
     /// The pid of the process, technically redundant with `procfs.pid`
     pub pid: pid_t,
 }
 
-#[derive(Debug, Clone)]
+#[repr(C)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Registers {
-    pub regs: user_regs_struct,
-    pub fregs: user_fpregs_struct,
+    pub regs: UserRegs,
+    pub fregs: UserFpregs,
 }
 
-impl Process {
+impl PTrace {
     /// Attaches ptrace to the given `pid`
     ///
     /// Ptrace will detach from `pid` when the returned `Process` struct is dropped
@@ -73,8 +77,8 @@ impl Process {
     ///
     /// The process should be paused (with `Process::Stop` or after the initial `Process::attach`) when calling this
     pub fn get_regs(&self) -> io::Result<Registers> {
-        let mut regs = MaybeUninit::uninit();
-        let mut fregs = MaybeUninit::uninit();
+        let mut regs: MaybeUninit<user_regs_struct> = MaybeUninit::uninit();
+        let mut fregs: MaybeUninit<user_fpregs_struct> = MaybeUninit::uninit();
 
         let res = unsafe {
             ptrace(
@@ -102,14 +106,14 @@ impl Process {
 
         unsafe {
             Ok(Registers {
-                regs: regs.assume_init(),
-                fregs: fregs.assume_init(),
+                regs: regs.assume_init().into(),
+                fregs: fregs.assume_init().into(),
             })
         }
     }
 }
 
-impl Drop for Process {
+impl Drop for PTrace {
     fn drop(&mut self) {
         unsafe {
             ptrace(

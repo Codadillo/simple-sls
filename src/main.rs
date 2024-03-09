@@ -2,7 +2,7 @@ use std::{error, fs::create_dir, io};
 
 use clap::{arg, command, Parser};
 use libc::pid_t;
-use project::ptrace::Process;
+use project::ptrace::PTrace;
 
 /// SLSify compute-oriented applications
 #[derive(Parser, Debug)]
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         e => e?,
     };
 
-    let proc = Process::attach(pid)?;
+    let proc = PTrace::attach(pid)?;
     proc.wait()?;
 
     println!("{:?}", proc.get_regs()?);
