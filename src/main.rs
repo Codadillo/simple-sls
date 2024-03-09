@@ -27,8 +27,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         e => e?,
     };
 
-    let mut cp = Checkpointer::attach(pid, Duration::from_secs(1), cpath.into())?;
-    cp.checkpoint()?;
+    let mut cp = Checkpointer::attach(pid, cpath.into())?;
+    // cp.checkpoint()?;
+
+    cp.run(Duration::from_secs(1))?;
 
     Ok(())
 }

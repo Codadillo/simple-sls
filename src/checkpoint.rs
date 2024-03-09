@@ -4,7 +4,8 @@ use std::{
     io::{Read, Seek, SeekFrom},
     os::unix::fs::FileExt,
     path::PathBuf,
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use libc::pid_t;
@@ -17,8 +18,6 @@ pub struct Checkpointer {
     pub procfs: Process,
     // pub ptrace: PTrace,
     pub mem_file: File,
-
-    pub period: Duration,
     pub path: PathBuf,
 
     pub seq: u64,
@@ -27,7 +26,7 @@ pub struct Checkpointer {
 }
 
 impl Checkpointer {
-    pub fn attach(pid: pid_t, period: Duration, path: PathBuf) -> Result<Self, Box<dyn Error>> {
+    pub fn attach(pid: pid_t, path: PathBuf) -> Result<Self, Box<dyn Error>> {
         let procfs = Process::new(pid)?;
         let mem_file = procfs.mem()?;
 
@@ -54,8 +53,6 @@ impl Checkpointer {
         Ok(Self {
             procfs,
             mem_file,
-
-            period,
             path,
 
             seq,
@@ -82,9 +79,7 @@ impl Checkpointer {
                 let immutable = !map.perms.contains(MMPermissions::WRITE);
                 let is_file = matches!(map.pathname, MMapPath::Path(_));
 
-                if immutable
-                    && (is_file || self.last_maps.contains(map))
-                {
+                if immutable && (is_file || self.last_maps.contains(map)) {
                     debug!(
                         "ignoring memory region {:?} @ {:x?} due to immutability () (is_file = {is_file})",
                         map.pathname, map.address
@@ -138,5 +133,16 @@ impl Checkpointer {
 
         info!("Completed checkpoint");
         Ok(())
+    }
+
+    pub fn run(&mut self, period: Duration) -> Result<(), Box<dyn Error>> {
+        let mut wait_time = period;
+        loop {
+            thread::sleep(wait_time);
+
+            let start = Instant::now();
+            self.checkpoint()?;
+            wait_time = period.saturating_sub(start.elapsed());
+        }
     }
 }
