@@ -1,8 +1,8 @@
-use std::{error, fs::create_dir, io};
+use std::{error, fs::create_dir, io, time::Duration};
 
 use clap::{arg, command, Parser};
 use libc::pid_t;
-use project::ptrace::PTrace;
+use project::checkpoint::Checkpointer;
 
 /// SLSify compute-oriented applications
 #[derive(Parser, Debug)]
@@ -18,19 +18,17 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
+    env_logger::init();
+
     let Args { pid, cpath } = Args::parse();
-    match create_dir(cpath) {
+    match create_dir(&cpath) {
         Ok(_) => (),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
         e => e?,
     };
 
-    let proc = PTrace::attach(pid)?;
-    proc.wait()?;
-
-    println!("{:?}", proc.get_regs()?);
-
-    proc.resume()?;
+    let mut cp = Checkpointer::attach(pid, Duration::from_secs(1), cpath.into())?;
+    cp.checkpoint()?;
 
     Ok(())
 }

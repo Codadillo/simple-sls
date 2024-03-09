@@ -2,7 +2,7 @@ use std::{error, io, mem::MaybeUninit, ptr};
 
 use libc::{
     c_int, kill, pid_t, ptrace, user_fpregs_struct, user_regs_struct, waitpid, PTRACE_ATTACH,
-    PTRACE_DETACH, PTRACE_GETFPREGS, PTRACE_GETREGS, SIGCONT, SIGSTOP,
+    PTRACE_DETACH, PTRACE_GETFPREGS, PTRACE_GETREGS
 };
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +35,7 @@ impl PTrace {
             )
         };
 
+        
         match res {
             0.. => Ok(Self { pid }),
             _ => Err(io::Error::last_os_error().into()),
@@ -51,15 +52,23 @@ impl PTrace {
         }
     }
 
-    /// Pauses the attached process
-    pub fn stop(&self) -> io::Result<()> {
-        self.signal(SIGSTOP)
-    }
+    // /// Pauses the attached process until the return guard is dropped.
+    // /// This function also waits for the process to be paused before returning.
+    // pub fn pause_guard(&self) -> io::Result<PauseGuard> {
+    //     self.stop()?;
+    //     self.wait()?;
+    //     Ok(PauseGuard { ptrace: &self })
+    // }
 
-    /// Resumes the attached process
-    pub fn resume(&self) -> io::Result<()> {
-        self.signal(SIGCONT)
-    }
+    // /// Pauses the attached process
+    // pub fn stop(&self) -> io::Result<()> {
+    //     self.signal(SIGSTOP)
+    // }
+
+    // /// Resumes the attached process
+    // pub fn resume(&self) -> io::Result<()> {
+    //     self.signal(SIGCONT)
+    // }
 
     /// Blocks until the attached process is paused
     pub fn wait(&self) -> io::Result<()> {
@@ -75,7 +84,7 @@ impl PTrace {
 
     /// Reads the register files of the attached process
     ///
-    /// The process should be paused (with `Process::Stop` or after the initial `Process::attach`) when calling this
+    /// The process should be paused (e.g. with `Self::Stop`) when calling this
     pub fn get_regs(&self) -> io::Result<Registers> {
         let mut regs: MaybeUninit<user_regs_struct> = MaybeUninit::uninit();
         let mut fregs: MaybeUninit<user_fpregs_struct> = MaybeUninit::uninit();
@@ -125,3 +134,19 @@ impl Drop for PTrace {
         }
     }
 }
+
+// pub struct PauseGuard<'a> {
+//     pub ptrace: &'a PTrace,
+// }
+
+// impl<'a> PauseGuard<'a> {
+//     pub fn resume(self) -> io::Result<()> {
+//         self.ptrace.resume()
+//     }
+// }
+
+// impl<'a> Drop for PauseGuard<'a> {
+//     fn drop(&mut self) {
+//         self.ptrace.resume().unwrap();
+//     }
+// }
