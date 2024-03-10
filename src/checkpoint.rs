@@ -14,6 +14,10 @@ use procfs::process::{MMPermissions, MMapPath, MemoryMap, Process};
 
 use crate::ptrace::PTrace;
 
+// TODOS:
+// - Threads (TLS, etc.)
+// - File descriptors (basic)
+
 pub struct StepData {
     pub seq: u64,
     pub seq_file: File,
