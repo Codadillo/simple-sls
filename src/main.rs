@@ -1,4 +1,4 @@
-use std::{error, fs::create_dir, io, time::Duration};
+use std::{error, fs::create_dir, io};
 
 use clap::{arg, command, Parser};
 use libc::pid_t;
@@ -28,9 +28,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let mut cp = Checkpointer::attach(pid, cpath.into())?;
-    // cp.checkpoint()?;
+    cp.checkpoint()?;
 
-    cp.run(Duration::from_secs(1))?;
+    // cp.run(std::time::Duration::from_secs(1))?;
 
     Ok(())
 }

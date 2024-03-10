@@ -14,22 +14,14 @@ use procfs::process::{MMPermissions, MMapPath, MemoryMap, Process};
 
 use crate::ptrace::PTrace;
 
-pub struct Checkpointer {
-    pub procfs: Process,
-    // pub ptrace: PTrace,
-    pub mem_file: File,
-    pub path: PathBuf,
-
+pub struct StepData {
     pub seq: u64,
     pub seq_file: File,
     pub last_maps: Vec<MemoryMap>,
 }
 
-impl Checkpointer {
-    pub fn attach(pid: pid_t, path: PathBuf) -> Result<Self, Box<dyn Error>> {
-        let procfs = Process::new(pid)?;
-        let mem_file = procfs.mem()?;
-
+impl StepData {
+    pub fn open(path: &PathBuf) -> Result<Self, Box<dyn Error>> {
         let mut seq_file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -51,18 +43,38 @@ impl Checkpointer {
         };
 
         Ok(Self {
-            procfs,
-            mem_file,
-            path,
-
             seq,
             seq_file,
             last_maps,
         })
     }
+}
+
+pub struct Checkpointer {
+    pub procfs: Process,
+    // pub ptrace: PTrace,
+    pub mem_file: File,
+    pub path: PathBuf,
+
+    pub step: StepData,
+}
+
+impl Checkpointer {
+    pub fn attach(pid: pid_t, path: PathBuf) -> Result<Self, Box<dyn Error>> {
+        let procfs = Process::new(pid)?;
+        let mem_file = procfs.mem()?;
+
+        Ok(Self {
+            step: StepData::open(&path)?,
+
+            procfs,
+            mem_file,
+            path,
+        })
+    }
 
     pub fn checkpoint(&mut self) -> Result<(), Box<dyn Error>> {
-        self.seq += 1;
+        self.step.seq += 1;
         info!("Starting a checkpoint");
 
         // Stop the process and get a checkpoint of its state
@@ -79,7 +91,7 @@ impl Checkpointer {
                 let immutable = !map.perms.contains(MMPermissions::WRITE);
                 let is_file = matches!(map.pathname, MMapPath::Path(_));
 
-                if immutable && (is_file || self.last_maps.contains(map)) {
+                if immutable && (is_file || self.step.last_maps.contains(map)) {
                     debug!(
                         "ignoring memory region {:?} @ {:x?} due to immutability () (is_file = {is_file})",
                         map.pathname, map.address
@@ -118,7 +130,7 @@ impl Checkpointer {
         info!("Created in memory checkpoint");
 
         // Now that the process is resumed we can persist the checkpoint to disk
-        let cp_dir = self.path.join(self.seq.to_string());
+        let cp_dir = self.path.join(self.step.seq.to_string());
         create_dir(&cp_dir)?;
 
         serde_json::to_writer(File::create(cp_dir.join("regs"))?, &regs)?;
@@ -128,8 +140,10 @@ impl Checkpointer {
             write(cp_dir.join(i.to_string()), mem)?;
         }
 
-        self.seq_file.write_all_at(&self.seq.to_le_bytes(), 0)?;
-        self.last_maps = maps.0;
+        self.step
+            .seq_file
+            .write_all_at(&self.step.seq.to_le_bytes(), 0)?;
+        self.step.last_maps = maps.0;
 
         info!("Completed checkpoint");
         Ok(())
