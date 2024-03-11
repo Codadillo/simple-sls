@@ -13,20 +13,23 @@ use goblin::{
         Header, ProgramHeader,
     },
 };
-
+use iced_x86::code_asm::CodeAssembler;
+use procfs::process::MemoryMap;
 use scroll::Pwrite;
 
 use crate::{checkpoint::StepData, ptrace::Registers};
 
 // TODO: more portability, this whole thing is pretty messy
-pub fn write_elf(output_path: impl AsRef<Path>, program: &[u8]) -> Result<(), Box<dyn Error>> {
+pub fn write_bootstrapper(output_path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
     // https://github.com/tchajed/minimal-elf/
 
-    let vaddr = 0x400000;
+    let vaddr = 0xe0000;
     let header_size = header64::SIZEOF_EHDR as u64;
     let pheader_size = program_header64::SIZEOF_PHDR as u64;
     let program_offset: u64 = header_size + pheader_size;
     let entry = vaddr + program_offset;
+
+    let program = make_program(todo!(), vaddr, entry)?;
 
     let header: header64::Header = Header {
         e_type: ET_EXEC,
@@ -56,15 +59,21 @@ pub fn write_elf(output_path: impl AsRef<Path>, program: &[u8]) -> Result<(), Bo
 
     let mut outfile = File::create(output_path)?;
     outfile.write_all(&buf)?;
-    outfile.write_all(program)?;
+    outfile.write_all(&program)?;
 
     Ok(())
 }
 
-pub fn write_bootstrapper(output_path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
-    // lea rax, [rip]; jmp rax
-    let program = [72, 141, 5, 0, 0, 0, 0, 255, 224];
-    write_elf(output_path, &program)
+pub fn make_program(maps: Vec<MemoryMap>, vaddr: u64, entry: u64) -> Result<Vec<u8>, Box<dyn Error>> {
+    // let mut mmap_args = vec![];
+    // for (i, map) in maps.into_iter().enumerate() {
+        
+    // }
+
+    // let mut c = CodeAssembler::new(64)?;
+    
+    // Ok(c.assemble(entry)?)
+    todo!()
 }
 
 pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {

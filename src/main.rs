@@ -27,14 +27,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         e => e?,
     };
 
-    // let mut cp = Checkpointer::attach(pid, cpath.into())?;
-    // cp.checkpoint()?;
+    let mut cp = Checkpointer::attach(pid, cpath.into())?;
+    cp.checkpoint()?;
 
     // cp.run(std::time::Duration::from_secs(1))?;
 
-    write_bootstrapper(
-        "cps/bs"
-    )?;
+    // write_bootstrapper(
+    //     "cps/bs"
+    // )?;
 
     Ok(())
 }

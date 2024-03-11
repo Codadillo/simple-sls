@@ -2,7 +2,7 @@ use std::{
     error::Error,
     fs::{create_dir, write, File, OpenOptions},
     io::{Read, Seek, SeekFrom},
-    os::unix::fs::FileExt,
+    os::unix::fs::{symlink, FileExt},
     path::PathBuf,
     thread,
     time::{Duration, Instant},
@@ -82,25 +82,44 @@ impl Checkpointer {
         info!("Starting a checkpoint");
 
         // Stop the process and get a checkpoint of its state
-        let (regs, maps, mems) = {
+        let maps = self.procfs.maps()?;
+        let mut mems = vec![];
+        let mut reusable_mems = vec![];
+        let regs = {
             let ptrace = PTrace::attach(self.procfs.pid)?;
             ptrace.wait()?;
             info!("Attached ptrace");
 
             let regs = ptrace.get_regs()?;
-            let maps = self.procfs.maps()?;
-            let mut mems = vec![];
 
             for (i, map) in maps.iter().enumerate() {
                 let immutable = !map.perms.contains(MMPermissions::WRITE);
                 let is_file = matches!(map.pathname, MMapPath::Path(_));
 
-                if immutable && (is_file || self.step.last_maps.contains(map)) {
-                    debug!(
-                        "ignoring memory region {:?} @ {:x?} due to immutability () (is_file = {is_file})",
-                        map.pathname, map.address
-                    );
-                    continue;
+                if immutable {
+                    if is_file {
+                        debug!(
+                            "ignoring memory region {:?} @ {:x?}, it is an immutable file",
+                            map.pathname, map.address
+                        );
+                        continue;
+                    }
+
+                    if let Some(old) = self
+                        .step
+                        .last_maps
+                        .iter()
+                        .enumerate()
+                        .find_map(|(j, m)| (m == map).then_some(j))
+                    {
+                        debug!(
+                            "ignoring memory region {:?} @ {:x?}, it is immutable and already checkpointed",
+                            map.pathname, map.address
+                        );
+
+                        reusable_mems.push((i, old));
+                        continue;
+                    }
                 }
 
                 let mut mem = vec![];
@@ -128,7 +147,7 @@ impl Checkpointer {
                 mems.push((i, mem));
             }
 
-            (regs, maps, mems)
+            regs
         };
 
         info!("Created in memory checkpoint");
@@ -142,6 +161,17 @@ impl Checkpointer {
 
         for (i, mem) in mems {
             write(cp_dir.join(i.to_string()), mem)?;
+        }
+
+        for (new, old) in reusable_mems {
+            // TODO: make this a hard link to make 
+            // cleaning old checkpoints easier
+            symlink(
+                self.path
+                    .join((self.step.seq - 1).to_string())
+                    .join(old.to_string()),
+                cp_dir.join(new.to_string()),
+            )?;
         }
 
         self.step
