@@ -88,8 +88,9 @@ impl Checkpointer {
         let maps = self.procfs.maps()?;
         let mut mems = vec![];
         let mut reusable_mems = vec![];
-        let ptrace = PTrace::attach(self.procfs.pid)?;
-        ptrace.wait()?;
+        let mut ptrace = PTrace::new(self.procfs.pid); // TODO: make this a member of self
+        ptrace.attach()?;
+        ptrace.wait_pause()?;
         info!("Attached ptrace");
 
         let regs = ptrace.get_regs()?;

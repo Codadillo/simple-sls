@@ -5,6 +5,7 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 use goblin::{
@@ -16,17 +17,17 @@ use goblin::{
     },
 };
 use libc::{
-    SYS_close, SYS_mmap, SYS_munmap, SYS_open, MAP_FIXED, MAP_PRIVATE, O_RDONLY, S_IRGRP, S_IRUSR,
-    S_IWUSR, S_IXGRP, S_IXUSR,
+    pid_t, SYS_close, SYS_getpid, SYS_kill, SYS_mmap, SYS_munmap, SYS_open, MAP_FIXED, MAP_PRIVATE,
+    O_RDONLY, SIGSEGV, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP, S_IXUSR, WUNTRACED,
 };
 use log::info;
-use procfs::{
-    process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps},
-    FromRead,
-};
+use procfs::process::{MMPermissions, MMapPath, MemoryMap};
 use scroll::Pwrite;
 
-use crate::{checkpoint::StepData, ptrace::Registers};
+use crate::{
+    checkpoint::StepData,
+    ptrace::{PTrace, Registers},
+};
 
 // TODO: more portability, this whole thing is pretty messy
 
@@ -129,7 +130,7 @@ pub fn assemble_bs_code(
     }
 
     {
-        use iced_x86::{code_asm::*, *};
+        use iced_x86::code_asm::*;
 
         let mut c = CodeAssembler::new(64)?;
 
@@ -174,6 +175,14 @@ pub fn assemble_bs_code(
             c.syscall()?;
         }
 
+        // have the bootstrapper stop itself
+        c.mov(rax, SYS_getpid)?;
+        c.syscall()?;
+        c.mov(rdi, rax)?;
+        c.mov(rsi, SIGSTOP as u64)?;
+        c.mov(rax, SYS_kill)?;
+        c.syscall()?;
+
         // Loop infinitely
         let mut loop_loc = c.create_label();
         c.set_label(&mut loop_loc)?;
@@ -185,6 +194,7 @@ pub fn assemble_bs_code(
 }
 
 pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
+    // Read in the last checkpoint
     let step = StepData::open(path)?;
     if step.seq == 0 {
         return Err("No checkpoints found".into());
@@ -194,8 +204,33 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
     let regs: Registers = serde_json::from_reader(File::open(cp_path.join("regs"))?)?;
     let maps: Vec<MemoryMap> = serde_json::from_reader(File::open(cp_path.join("maps"))?)?;
 
+    // Create the bootstrapper for the last checkpoint
     let bs_path = cp_path.join("bs");
     create_bootstrapper(&bs_path, &cp_path, maps)?;
+
+    // Run the bootstrapper
+    let mut bootstrap = Command::new(&bs_path)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    {
+        let mut ptrace = PTrace::new(bootstrap.id() as pid_t);
+        ptrace.wait_pause_unattached()?;
+
+        ptrace.attach()?;
+        ptrace.set_regs(regs)?;
+        ptrace.detach()?;
+
+        println!("{}", ptrace.pid);
+        // ptrace.resume()?;
+    }
+
+    // The bootstrapper should now be the restored process
+    // let it run itself out
+    let res = bootstrap.wait()?;
+    println!("{res}");
 
     Ok(())
 }
