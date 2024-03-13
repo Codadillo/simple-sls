@@ -2,7 +2,7 @@ use std::{error, fs::create_dir, io};
 
 use clap::{arg, command, Parser};
 use libc::pid_t;
-use project::{checkpoint::Checkpointer, restore::write_bootstrapper};
+use project::{checkpoint::Checkpointer, restore::restore_checkpoint};
 
 /// SLSify compute-oriented applications
 #[derive(Parser, Debug)]
@@ -27,14 +27,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         e => e?,
     };
 
-    let mut cp = Checkpointer::attach(pid, cpath.into())?;
+    let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
     cp.checkpoint()?;
 
-    // cp.run(std::time::Duration::from_secs(1))?;
-
-    // write_bootstrapper(
-    //     "cps/bs"
-    // )?;
+    restore_checkpoint(&cpath.into())?;
 
     Ok(())
 }

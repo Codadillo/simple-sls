@@ -10,9 +10,9 @@ use std::{
 
 use libc::pid_t;
 use log::{debug, info};
-use procfs::process::{MMPermissions, MMapPath, MemoryMap, Process};
+use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
 
-use crate::ptrace::PTrace;
+use crate::ptrace::{PTrace, Registers};
 
 // TODOS:
 // - Threads (TLS, etc.)
@@ -63,6 +63,13 @@ pub struct Checkpointer {
     pub step: StepData,
 }
 
+pub struct VolatileCheckpoint {
+    pub regs: Registers,
+    pub maps: MemoryMaps,
+    pub mems: Vec<(usize, Vec<u8>)>,
+    pub reusable_mems: Vec<(usize, usize)>,
+}
+
 impl Checkpointer {
     pub fn attach(pid: pid_t, path: PathBuf) -> Result<Self, Box<dyn Error>> {
         let procfs = Process::new(pid)?;
@@ -77,94 +84,99 @@ impl Checkpointer {
         })
     }
 
-    pub fn checkpoint(&mut self) -> Result<(), Box<dyn Error>> {
-        self.step.seq += 1;
-        info!("Starting a checkpoint");
-
-        // Stop the process and get a checkpoint of its state
+    pub fn volatile_checkpoint(&mut self) -> Result<VolatileCheckpoint, Box<dyn Error>> {
         let maps = self.procfs.maps()?;
         let mut mems = vec![];
         let mut reusable_mems = vec![];
-        let regs = {
-            let ptrace = PTrace::attach(self.procfs.pid)?;
-            ptrace.wait()?;
-            info!("Attached ptrace");
+        let ptrace = PTrace::attach(self.procfs.pid)?;
+        ptrace.wait()?;
+        info!("Attached ptrace");
 
-            let regs = ptrace.get_regs()?;
+        let regs = ptrace.get_regs()?;
 
-            for (i, map) in maps.iter().enumerate() {
-                let immutable = !map.perms.contains(MMPermissions::WRITE);
-                let is_file = matches!(map.pathname, MMapPath::Path(_));
+        for (i, map) in maps.iter().enumerate() {
+            let immutable = !map.perms.contains(MMPermissions::WRITE);
+            let is_file = matches!(map.pathname, MMapPath::Path(_));
 
-                if immutable {
-                    if is_file {
-                        debug!(
-                            "ignoring memory region {:?} @ {:x?}, it is an immutable file",
-                            map.pathname, map.address
-                        );
-                        continue;
-                    }
+            if immutable {
+                if is_file {
+                    debug!(
+                        "ignoring memory region {:?} @ {:x?}, it is an immutable file",
+                        map.pathname, map.address
+                    );
+                    continue;
+                }
 
-                    if let Some(old) = self
-                        .step
-                        .last_maps
-                        .iter()
-                        .enumerate()
-                        .find_map(|(j, m)| (m == map).then_some(j))
-                    {
-                        debug!(
+                if let Some(old) = self
+                    .step
+                    .last_maps
+                    .iter()
+                    .enumerate()
+                    .find_map(|(j, m)| (m == map).then_some(j))
+                {
+                    debug!(
                             "ignoring memory region {:?} @ {:x?}, it is immutable and already checkpointed",
                             map.pathname, map.address
                         );
 
-                        reusable_mems.push((i, old));
-                        continue;
-                    }
+                    reusable_mems.push((i, old));
+                    continue;
                 }
-
-                let mut mem = vec![];
-                (&self.mem_file).seek(SeekFrom::Start(map.address.0))?;
-                match (&self.mem_file)
-                    .take(map.address.1 - map.address.0)
-                    .read_to_end(&mut mem)
-                {
-                    Err(e) if e.raw_os_error() == Some(5) => {
-                        debug!(
-                            "ignoring memory region {:?} @ {:x?} due to read error",
-                            map.pathname, map.address
-                        );
-                        continue;
-                    }
-                    res => {
-                        res?;
-                    }
-                };
-
-                debug!(
-                    "saving memory rejoin {:?} @ {:x?}",
-                    map.pathname, map.address
-                );
-                mems.push((i, mem));
             }
 
-            regs
-        };
+            let mut mem = vec![];
+            (&self.mem_file).seek(SeekFrom::Start(map.address.0))?;
+            match (&self.mem_file)
+                .take(map.address.1 - map.address.0)
+                .read_to_end(&mut mem)
+            {
+                Err(e) if e.raw_os_error() == Some(5) => {
+                    debug!(
+                        "ignoring memory region {:?} @ {:x?} due to read error",
+                        map.pathname, map.address
+                    );
+                    continue;
+                }
+                res => {
+                    res?;
+                }
+            };
 
+            debug!(
+                "saving memory rejoin {:?} @ {:x?}",
+                map.pathname, map.address
+            );
+            mems.push((i, mem));
+        }
+
+        Ok(VolatileCheckpoint {
+            regs,
+            maps,
+            mems,
+            reusable_mems,
+        })
+    }
+
+    pub fn checkpoint(&mut self) -> Result<(), Box<dyn Error>> {
+        self.step.seq += 1;
+        info!("Starting a checkpoint");
+
+        let v_cp = self.volatile_checkpoint()?;
         info!("Created in memory checkpoint");
 
         // Now that the process is resumed we can persist the checkpoint to disk
         let cp_dir = self.path.join(self.step.seq.to_string());
         create_dir(&cp_dir)?;
 
-        serde_json::to_writer(File::create(cp_dir.join("regs"))?, &regs)?;
-        serde_json::to_writer(File::create(cp_dir.join("maps"))?, &maps)?;
+        serde_json::to_writer(File::create(cp_dir.join("regs"))?, &v_cp.regs)?;
+        serde_json::to_writer(File::create(cp_dir.join("maps"))?, &v_cp.maps.0)?;
 
-        for (i, mem) in mems {
+        for (i, mem) in v_cp.mems {
             write(cp_dir.join(i.to_string()), mem)?;
         }
 
-        for (new, old) in reusable_mems {
-            // TODO: make this a hard link to make 
+        for (new, old) in v_cp.reusable_mems {
+            // TODO: make this a hard link to make
             // cleaning old checkpoints easier
             symlink(
                 self.path
@@ -177,7 +189,7 @@ impl Checkpointer {
         self.step
             .seq_file
             .write_all_at(&self.step.seq.to_le_bytes(), 0)?;
-        self.step.last_maps = maps.0;
+        self.step.last_maps = v_cp.maps.0;
 
         info!("Completed checkpoint");
         Ok(())
