@@ -2,7 +2,7 @@ use std::{error, fs::create_dir, io, time::Duration};
 
 use clap::{arg, command, Parser};
 use libc::pid_t;
-use project::{checkpoint::Checkpointer, restore::restore_checkpoint};
+use project::{checkpoint::{self, Checkpointer}, restore::restore_checkpoint};
 
 /// SLSify compute-oriented applications
 #[derive(Parser, Debug)]
@@ -26,6 +26,10 @@ enum Args {
         /// The maximum number of checkpoints to keep on disk.
         #[arg(short, long, default_value = "3")]
         max: u32,
+    
+        /// Whether or not to delete the checkpoint directory first
+        #[arg(short, long)]
+        reset: bool,
     },
 
     Restore {
@@ -44,7 +48,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             period,
             cpath,
             max,
+            reset,
         } => {
+            if reset {
+                checkpoint::maybe_remove_dir_all(&cpath)?;
+            }
+
             match create_dir(&cpath) {
                 Ok(_) => (),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),

@@ -20,7 +20,7 @@ use libc::{
     exit, pid_t, SYS_close, SYS_getpid, SYS_kill, SYS_mmap, SYS_munmap, SYS_open, MAP_FIXED,
     MAP_PRIVATE, O_RDONLY, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP, S_IXUSR,
 };
-use log::info;
+use log::{debug, info};
 use procfs::process::MemoryMap;
 use scroll::Pwrite;
 
@@ -119,7 +119,7 @@ pub fn assemble_bs_code(
                 if path.exists() {
                     (path, 0u64)
                 } else {
-                    info!(
+                    debug!(
                         "skipping maps[{i}] at {path:?} because it had no associated checkpoint file"
                     );
                     continue;
@@ -139,7 +139,7 @@ pub fn assemble_bs_code(
 
         let mut c = CodeAssembler::new(64)?;
 
-        // umap everything but our own code section
+        // unmap everything but our own code section
         // We make the assumption that our required space is vaddr to vaddr + 0x1000
         let code_len = 0x1000;
         c.xor(rdi, rdi)?;
@@ -147,6 +147,7 @@ pub fn assemble_bs_code(
         c.mov(rax, SYS_munmap)?;
         c.syscall()?;
 
+        // TODO: I'm pretty sure this munmap call returns an error
         c.mov(rdi, vaddr + code_len)?;
         c.mov(rsi, u64::MAX - (vaddr + code_len))?;
         c.mov(rax, SYS_munmap)?;
@@ -188,7 +189,7 @@ pub fn assemble_bs_code(
         c.mov(rax, SYS_kill)?;
         c.syscall()?;
 
-        // Loop infinitely
+        // loop infinitely (maybe unnecessary)
         let mut loop_loc = c.create_label();
         c.set_label(&mut loop_loc)?;
         c.jmp(loop_loc)?;
