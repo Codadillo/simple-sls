@@ -1,8 +1,4 @@
-use std::{
-    error,
-    fs::{create_dir, remove_dir_all},
-    io,
-};
+use std::{error, fs::create_dir, io, time::Duration};
 
 use clap::{arg, command, Parser};
 use libc::pid_t;
@@ -11,33 +7,65 @@ use project::{checkpoint::Checkpointer, restore::restore_checkpoint};
 /// SLSify compute-oriented applications
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-struct Args {
-    /// PID of the process to SLS
-    #[arg(short, long)]
-    pid: pid_t,
+enum Args {
+    Checkpoint {
+        /// PID of the process to SLS.
+        #[arg(short, long)]
+        pid: pid_t,
 
-    /// Checkpoint directory path
-    #[arg(short, long, default_value = "/tmp/slsdir")]
-    cpath: String,
+        /// Checkpoint period.
+        /// If specified, rather than just checkpointing once,
+        /// we will checkpoint once every period seconds.
+        #[arg(short = 't', long)]
+        period: Option<u64>,
+
+        /// Checkpoint directory path.
+        #[arg(short, long, default_value = "/tmp/slsdir")]
+        cpath: String,
+
+        /// The maximum number of checkpoints to keep on disk.
+        #[arg(short, long, default_value = "3")]
+        max: u32,
+    },
+
+    Restore {
+        /// Checkpoint directory path
+        #[arg(short, long, default_value = "/tmp/slsdir")]
+        cpath: String,
+    },
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     env_logger::init();
 
-    let Args { pid, cpath } = Args::parse();
+    match Args::parse() {
+        Args::Checkpoint {
+            pid,
+            period,
+            cpath,
+            max,
+        } => {
+            match create_dir(&cpath) {
+                Ok(_) => (),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
+                e => e?,
+            };
 
-    remove_dir_all(&cpath)?;
+            let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
 
-    match create_dir(&cpath) {
-        Ok(_) => (),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
-        e => e?,
-    };
+            match period {
+                Some(s) => cp.run(Duration::from_secs(s), max as u64)?,
+                None => {
+                    cp.checkpoint()?;
+                    cp.cull_checkpoints(max as u64)?;
+                }
+            }
+        }
 
-    let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
-    cp.checkpoint()?;
-
-    restore_checkpoint(&cpath.into())?;
+        Args::Restore { cpath } => {
+            restore_checkpoint(&cpath.into())?;
+        }
+    }
 
     Ok(())
 }

@@ -1,21 +1,22 @@
 use std::{
     error::Error,
-    fs::{create_dir, write, File, OpenOptions},
-    io::{Read, Seek, SeekFrom},
-    os::unix::fs::{symlink, FileExt},
-    path::PathBuf,
+    fs::{create_dir, hard_link, remove_dir_all, write, File, OpenOptions},
+    io::{ErrorKind, Read, Seek, SeekFrom},
+    os::unix::fs::FileExt,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
 
 use libc::pid_t;
 use log::{debug, info};
-use procfs::process::{MMPermissions, MemoryMap, MemoryMaps, Process};
+use procfs::process::{MMPermissions, MemoryMap, Process};
 
 use crate::ptrace::{PTrace, Registers};
 
 // TODOS:
 // - Threads (TLS, etc.)
+// -- what do with vvar and vdso
 // - File descriptors (basic)
 
 pub struct StepData {
@@ -65,7 +66,7 @@ pub struct Checkpointer {
 
 pub struct VolatileCheckpoint {
     pub regs: Registers,
-    pub maps: MemoryMaps,
+    pub maps: Vec<MemoryMap>,
     pub mems: Vec<(usize, Vec<u8>)>,
     pub reusable_mems: Vec<(usize, usize)>,
 }
@@ -95,7 +96,8 @@ impl Checkpointer {
 
         let regs = ptrace.get_regs()?;
 
-        for (i, map) in maps.iter().enumerate() {
+        let mut checkpointed_maps = vec![];
+        for map in maps {
             let immutable = !map.perms.contains(MMPermissions::WRITE);
 
             if immutable {
@@ -115,14 +117,16 @@ impl Checkpointer {
                     .last_maps
                     .iter()
                     .enumerate()
-                    .find_map(|(j, m)| (m == map).then_some(j))
+                    .find_map(|(j, m)| (m == &map).then_some(j))
                 {
+                    let new = checkpointed_maps.len();
                     debug!(
-                            "ignoring memory region {:?} @ {:x?}, it is immutable and already checkpointed",
-                            map.pathname, map.address
+                            "reusing old_maps[{old}] for memory region maps[{new}] = {:?}, it is immutable and already checkpointed",
+                            map.pathname
                         );
 
-                    reusable_mems.push((i, old));
+                    reusable_mems.push((new, old));
+                    checkpointed_maps.push(map);
                     continue;
                 }
             }
@@ -135,8 +139,8 @@ impl Checkpointer {
             {
                 Err(e) if e.raw_os_error() == Some(5) => {
                     debug!(
-                        "ignoring memory region {:?} @ {:x?} due to read error",
-                        map.pathname, map.address
+                        "ignoring memory region map {:?} due to read error",
+                        map.pathname
                     );
                     continue;
                 }
@@ -145,23 +149,22 @@ impl Checkpointer {
                 }
             };
 
-            debug!(
-                "saving memory rejoin {:?} @ {:x?}",
-                map.pathname, map.address
-            );
-            mems.push((i, mem));
+            let new = checkpointed_maps.len();
+            debug!("saving memory region maps[{new}] = {:?}", map.pathname);
+            mems.push((new, mem));
+            checkpointed_maps.push(map);
         }
 
         Ok(VolatileCheckpoint {
             regs,
-            maps,
+            maps: checkpointed_maps,
             mems,
             reusable_mems,
         })
     }
 
     pub fn checkpoint(&mut self) -> Result<(), Box<dyn Error>> {
-        self.step.seq += 1;
+        self.step.seq = self.step.seq.wrapping_add(1);
         info!("Starting a checkpoint");
 
         let v_cp = self.volatile_checkpoint()?;
@@ -169,19 +172,21 @@ impl Checkpointer {
 
         // Now that the process is resumed we can persist the checkpoint to disk
         let cp_dir = self.path.join(self.step.seq.to_string());
+        info!("Checkpointing to {cp_dir:?}");
+
+        maybe_remove_dir_all(&cp_dir)?;
         create_dir(&cp_dir)?;
 
-        serde_json::to_writer(File::create(cp_dir.join("regs"))?, &v_cp.regs)?;
-        serde_json::to_writer(File::create(cp_dir.join("maps"))?, &v_cp.maps.0)?;
-
         for (i, mem) in v_cp.mems {
+            debug!("Writing maps[{i}]");
+
             write(cp_dir.join(i.to_string()), mem)?;
         }
 
         for (new, old) in v_cp.reusable_mems {
-            // TODO: make this a hard link to make
-            // cleaning old checkpoints easier
-            symlink(
+            debug!("Linking maps[{new}] = old_maps[{old}]");
+
+            hard_link(
                 self.path
                     .join((self.step.seq - 1).to_string())
                     .join(old.to_string()),
@@ -189,23 +194,55 @@ impl Checkpointer {
             )?;
         }
 
+        serde_json::to_writer(File::create(cp_dir.join("regs"))?, &v_cp.regs)?;
+        serde_json::to_writer(File::create(cp_dir.join("maps"))?, &v_cp.maps)?;
+
         self.step
             .seq_file
             .write_all_at(&self.step.seq.to_le_bytes(), 0)?;
-        self.step.last_maps = v_cp.maps.0;
+        self.step.last_maps = v_cp.maps;
 
         info!("Completed checkpoint");
         Ok(())
     }
 
-    pub fn run(&mut self, period: Duration) -> Result<(), Box<dyn Error>> {
+    pub fn run(&mut self, period: Duration, max_cps: u64) -> Result<(), Box<dyn Error>> {
         let mut wait_time = period;
         loop {
             thread::sleep(wait_time);
-
             let start = Instant::now();
+
             self.checkpoint()?;
+            self.cull_checkpoints(max_cps)?;
+
             wait_time = period.saturating_sub(start.elapsed());
         }
+    }
+
+    pub fn cull_checkpoints(&mut self, max_cps: u64) -> Result<(), Box<dyn Error>> {
+        if self.step.seq < max_cps {
+            return Ok(());
+        }
+
+        self.clean_checkpoints(0..=self.step.seq - max_cps)
+    }
+
+    pub fn clean_checkpoints(
+        &mut self,
+        range: impl IntoIterator<Item = u64>,
+    ) -> Result<(), Box<dyn Error>> {
+        for cp in range {
+            maybe_remove_dir_all(self.path.join(cp.to_string()))?
+        }
+
+        Ok(())
+    }
+}
+
+pub fn maybe_remove_dir_all(path: impl AsRef<Path>) -> std::io::Result<()> {
+    match remove_dir_all(path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        e => e,
     }
 }

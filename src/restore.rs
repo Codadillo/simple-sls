@@ -17,8 +17,8 @@ use goblin::{
     },
 };
 use libc::{
-    pid_t, SYS_close, SYS_getpid, SYS_kill, SYS_mmap, SYS_munmap, SYS_open, MAP_FIXED, MAP_PRIVATE,
-    O_RDONLY, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP, S_IXUSR,
+    exit, pid_t, SYS_close, SYS_getpid, SYS_kill, SYS_mmap, SYS_munmap, SYS_open, MAP_FIXED,
+    MAP_PRIVATE, O_RDONLY, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP, S_IXUSR,
 };
 use log::info;
 use procfs::process::MemoryMap;
@@ -120,7 +120,7 @@ pub fn assemble_bs_code(
                     (path, 0u64)
                 } else {
                     info!(
-                        "skipping maps[{i}]: {map:?} because it had no associated checkpoint file"
+                        "skipping maps[{i}] at {path:?} because it had no associated checkpoint file"
                     );
                     continue;
                 }
@@ -199,6 +199,8 @@ pub fn assemble_bs_code(
 }
 
 pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
+    info!("Restoring checkpoint from {path:?}");
+
     // Read in the last checkpoint
     let step = StepData::open(path)?;
     if step.seq == 0 {
@@ -206,14 +208,18 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
     }
 
     let cp_path = path.join(step.seq.to_string());
+    info!("Reading in last checkpoint data from {cp_path:?}");
+
     let regs: Registers = serde_json::from_reader(File::open(cp_path.join("regs"))?)?;
     let maps: Vec<MemoryMap> = serde_json::from_reader(File::open(cp_path.join("maps"))?)?;
-
+    
     // Create the bootstrapper for the last checkpoint
+    info!("Creating bootstrapper binary");
     let bs_path = cp_path.join("bs");
     create_bootstrapper(&bs_path, &cp_path, maps)?;
 
     // Run the bootstrapper
+    info!("Running bootstrapper");
     let mut bootstrap = Command::new(&bs_path)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -228,14 +234,14 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
         ptrace.set_regs(regs)?;
         ptrace.detach()?;
 
-        println!("{}", ptrace.pid);
-        // ptrace.resume()?;
+        info!("The process is fully restored");
+        ptrace.resume()?;
     }
 
     // The bootstrapper should now be the restored process
     // let it run itself out
     let res = bootstrap.wait()?;
-    println!("{res}");
 
-    Ok(())
+    info!("Restored process exited with status {res}, exiting");
+    unsafe { exit(res.code().unwrap_or(0)) };
 }
