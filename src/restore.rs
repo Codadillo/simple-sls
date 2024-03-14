@@ -18,10 +18,10 @@ use goblin::{
 };
 use libc::{
     pid_t, SYS_close, SYS_getpid, SYS_kill, SYS_mmap, SYS_munmap, SYS_open, MAP_FIXED, MAP_PRIVATE,
-    O_RDONLY, SIGSEGV, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP, S_IXUSR, WUNTRACED,
+    O_RDONLY, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP, S_IXUSR,
 };
 use log::info;
-use procfs::process::{MMPermissions, MMapPath, MemoryMap};
+use procfs::process::MemoryMap;
 use scroll::Pwrite;
 
 use crate::{
@@ -38,7 +38,9 @@ pub fn create_bootstrapper(
 ) -> Result<(), Box<dyn Error>> {
     let vaddr = 0xe0000;
     let data_addr = vaddr + header64::SIZEOF_EHDR as u64 + program_header64::SIZEOF_PHDR as u64;
+
     let (data, program) = assemble_bs_code(checkpoint_dir, maps, vaddr, data_addr)?;
+
     write_bs_elf(output_path, vaddr, data, program)
 }
 
@@ -107,12 +109,15 @@ pub fn assemble_bs_code(
         let prot = map.perms.bits();
 
         let flags = MAP_FIXED | MAP_PRIVATE;
-        let file_path = match map.pathname {
-            MMapPath::Path(path) if !map.perms.contains(MMPermissions::WRITE) => path,
+        let (file_path, offset) = match map.pathname {
+            // It seems like there are some parts of an ELF file that will
+            // end up in a read only memory mapping but differ from the on disk
+            // version of the file, so for now we comment this out
+            // MMapPath::Path(path) if !map.perms.contains(MMPermissions::WRITE) => (path, map.offset),
             _ => {
                 let path = cp_dir.join(i.to_string());
                 if path.exists() {
-                    path
+                    (path, 0u64)
                 } else {
                     info!(
                         "skipping maps[{i}]: {map:?} because it had no associated checkpoint file"
@@ -126,7 +131,7 @@ pub fn assemble_bs_code(
         let raw_path = CString::new(file_path.to_str().unwrap())?;
         data.extend(raw_path.as_bytes_with_nul());
 
-        mmap_args.push((addr, len, prot, flags, path_ptr, map.offset));
+        mmap_args.push((addr, len, prot, flags, path_ptr, offset));
     }
 
     {

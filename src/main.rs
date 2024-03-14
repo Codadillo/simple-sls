@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let Args { pid, cpath } = Args::parse();
 
-    // remove_dir_all(&cpath)?;
+    remove_dir_all(&cpath)?;
 
     match create_dir(&cpath) {
         Ok(_) => (),
@@ -34,8 +34,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         e => e?,
     };
 
-    // let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
-    // cp.checkpoint()?;
+    let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
+    cp.checkpoint()?;
 
     restore_checkpoint(&cpath.into())?;
 

@@ -10,7 +10,7 @@ use std::{
 
 use libc::pid_t;
 use log::{debug, info};
-use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
+use procfs::process::{MMPermissions, MemoryMap, MemoryMaps, Process};
 
 use crate::ptrace::{PTrace, Registers};
 
@@ -97,16 +97,18 @@ impl Checkpointer {
 
         for (i, map) in maps.iter().enumerate() {
             let immutable = !map.perms.contains(MMPermissions::WRITE);
-            let is_file = matches!(map.pathname, MMapPath::Path(_));
 
             if immutable {
-                if is_file {
-                    debug!(
-                        "ignoring memory region {:?} @ {:x?}, it is an immutable file",
-                        map.pathname, map.address
-                    );
-                    continue;
-                }
+                // It seems like there are some parts of an ELF file that will
+                // end up in a read only memory mapping but differ from the on disk
+                // version of the file, so for now we comment this out
+                // if matches!(map.pathname, MMapPath::Path(_)) {
+                //     debug!(
+                //         "ignoring memory region {:?} @ {:x?}, it is an immutable file",
+                //         map.pathname, map.address
+                //     );
+                //     continue;
+                // }
 
                 if let Some(old) = self
                     .step
