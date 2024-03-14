@@ -224,6 +224,7 @@ impl Checkpointer {
             return Ok(());
         }
 
+        // FIXME: this won't work if self.step.seq wraps back around to 0
         self.clean_checkpoints(0..=self.step.seq - max_cps)
     }
 
