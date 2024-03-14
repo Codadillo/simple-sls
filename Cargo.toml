@@ -16,5 +16,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 
 [dev-dependencies]
+large-primes = "0.5.1"
+num-bigint = "0.4.4"
 rand = { version = "0.8.5", features = ["small_rng"] }
 travelling_salesman = "1.1.22"
