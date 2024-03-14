@@ -36,6 +36,7 @@ pub fn create_bootstrapper(
     checkpoint_dir: &PathBuf,
     maps: Vec<MemoryMap>,
 ) -> Result<(), Box<dyn Error>> {
+    // TODO: automatically find a non-conflicting vaddr from maps
     let vaddr = 0xe0000;
     let data_addr = vaddr + header64::SIZEOF_EHDR as u64 + program_header64::SIZEOF_PHDR as u64;
 
@@ -213,7 +214,7 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
 
     let regs: Registers = serde_json::from_reader(File::open(cp_path.join("regs"))?)?;
     let maps: Vec<MemoryMap> = serde_json::from_reader(File::open(cp_path.join("maps"))?)?;
-    
+
     // Create the bootstrapper for the last checkpoint
     info!("Creating bootstrapper binary");
     let bs_path = cp_path.join("bs");

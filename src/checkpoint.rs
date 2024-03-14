@@ -195,6 +195,7 @@ impl Checkpointer {
         for (i, mem) in v_cp.mems {
             debug!("Writing maps[{i}]");
 
+            // syncing: this should fsync before it returns
             write(cp_dir.join(i.to_string()), mem)?;
         }
 
@@ -209,12 +210,20 @@ impl Checkpointer {
             )?;
         }
 
-        serde_json::to_writer(File::create(cp_dir.join("regs"))?, &v_cp.regs)?;
-        serde_json::to_writer(File::create(cp_dir.join("maps"))?, &v_cp.maps)?;
+        // syncing: the scope ensures that the File structs are dropped at thus fsynced
+        {
+            serde_json::to_writer(File::create(cp_dir.join("regs"))?, &v_cp.regs)?;
+            serde_json::to_writer(File::create(cp_dir.join("maps"))?, &v_cp.maps)?;
+        }
 
         self.step
             .seq_file
             .write_all_at(self.step.seq.to_string().as_bytes(), 0)?;
+
+        // syncing: obviously this syncs the seq file,
+        // and every other file write to our cp has already been fsynced
+        self.step.seq_file.sync_all()?;
+
         self.step.last_maps = v_cp.maps;
 
         info!("Completed checkpoint");
