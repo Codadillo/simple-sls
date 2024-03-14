@@ -164,10 +164,27 @@ impl Checkpointer {
     }
 
     pub fn checkpoint(&mut self) -> Result<(), Box<dyn Error>> {
+        self.checkpoint_timed(false).map(|_| ())
+    }
+
+    pub fn checkpoint_timed(
+        &mut self,
+        time_pause: bool,
+    ) -> Result<Option<Duration>, Box<dyn Error>> {
         self.step.seq = self.step.seq.wrapping_add(1);
         info!("Starting a checkpoint");
 
-        let v_cp = self.volatile_checkpoint()?;
+        let mut pause_time = None;
+        let v_cp = if time_pause {
+            let pause_start = Instant::now();
+            let v_cp = self.volatile_checkpoint()?;
+            pause_time = Some(pause_start.elapsed());
+
+            v_cp
+        } else {
+            self.volatile_checkpoint()?
+        };
+
         info!("Created in memory checkpoint");
 
         // Now that the process is resumed we can persist the checkpoint to disk
@@ -203,7 +220,7 @@ impl Checkpointer {
         self.step.last_maps = v_cp.maps;
 
         info!("Completed checkpoint");
-        Ok(())
+        Ok(pause_time)
     }
 
     pub fn run(&mut self, period: Duration, max_cps: u64) -> Result<(), Box<dyn Error>> {
@@ -216,6 +233,39 @@ impl Checkpointer {
             self.cull_checkpoints(max_cps)?;
 
             wait_time = period.saturating_sub(start.elapsed());
+        }
+    }
+
+    pub fn run_adaptive(
+        &mut self,
+        max_overhead: f64,
+        min_period: Duration,
+        max_cps: u64,
+    ) -> Result<(), Box<dyn Error>> {
+        assert!(max_overhead >= 0.);
+
+        let mut wait_time = min_period;
+        loop {
+            thread::sleep(wait_time);
+
+            let start = Instant::now();
+
+            let paused_time = self.checkpoint_timed(true)?.unwrap().as_secs_f64();
+            self.cull_checkpoints(max_cps)?;
+
+            let cp_time = start.elapsed().as_secs_f64();
+
+            // Calculate how long we should let the process run freely
+            // so that this checkpoint added at most `max_overhead` percent
+            // overhead to the program.
+            //
+            // max_overhead = paused_time / runtime
+            // => runtime = paused_time / max_overhead
+            let free_run_time = paused_time / max_overhead;
+            let remaining_free_run_time = free_run_time - (cp_time - paused_time);
+            let remaining_min_period = min_period.as_secs_f64() - cp_time;
+
+            wait_time = Duration::from_secs_f64(remaining_free_run_time.max(remaining_min_period));
         }
     }
 
