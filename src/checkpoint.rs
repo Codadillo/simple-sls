@@ -94,16 +94,22 @@ impl Checkpointer {
         info!("Attached ptrace");
 
         let regs = ptrace.get_regs()?;
-    
+
         let mut files = vec![]; // I want try_collect
         for file in self.procfs.fd()? {
             let file = file?;
-        
+
             // I feel like procfs should do this for me
             // Also because it doesn't I should probably make my own
             // fdinfo type struct so I don't have to have this vector of tuples
             let fdinfo_raw = read_to_string(format!("/proc/{}/fdinfo/{:?}", ptrace.pid, file.fd))?;
-            let offset: u64 = fdinfo_raw.strip_prefix("pos:\t").unwrap().lines().next().unwrap().parse()?;
+            let offset: u64 = fdinfo_raw
+                .strip_prefix("pos:\t")
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .parse()?;
 
             files.push((file, offset));
         }
@@ -176,27 +182,13 @@ impl Checkpointer {
         })
     }
 
-    pub fn checkpoint(&mut self) -> Result<(), Box<dyn Error>> {
-        self.checkpoint_timed(false).map(|_| ())
-    }
-
-    pub fn checkpoint_timed(
-        &mut self,
-        time_pause: bool,
-    ) -> Result<Option<Duration>, Box<dyn Error>> {
+    pub fn checkpoint(&mut self) -> Result<Duration, Box<dyn Error>> {
         self.step.seq = self.step.seq.wrapping_add(1);
         info!("Starting a checkpoint");
 
-        let mut pause_time = None;
-        let v_cp = if time_pause {
-            let pause_start = Instant::now();
-            let v_cp = self.volatile_checkpoint()?;
-            pause_time = Some(pause_start.elapsed());
-
-            v_cp
-        } else {
-            self.volatile_checkpoint()?
-        };
+        let pause_start = Instant::now();
+        let v_cp = self.volatile_checkpoint()?;
+        let pause_time = pause_start.elapsed();
 
         info!("Created in memory checkpoint");
 
@@ -273,7 +265,7 @@ impl Checkpointer {
 
             let start = Instant::now();
 
-            let paused_time = self.checkpoint_timed(true)?.unwrap().as_secs_f64();
+            let paused_time = self.checkpoint()?.as_secs_f64();
             self.cull_checkpoints(max_cps)?;
 
             let cp_time = start.elapsed().as_secs_f64();

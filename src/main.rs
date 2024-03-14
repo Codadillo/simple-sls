@@ -67,17 +67,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 e => e?,
             };
 
-            // let mut child = Command::new("target/debug/examples/travelling_salesman").spawn()?;
-            // let mut child = Command::new("./a.out").spawn()?;
-            // println!("{}", child.id());
-            // unsafe { libc::kill(child.id() as _, libc::SIGSTOP) };
-
-            // let mut p = PTrace::new(child.id() as _);
-            // p.attach()?;
-            // p.set_regs(p.get_regs()?)?;
-            // p.detach()?;
-
-            // let pid = child.id() as pid_t;
             let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
 
             match period {
