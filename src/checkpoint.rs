@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    fs::{create_dir, hard_link, remove_dir_all, write, File, OpenOptions},
+    fs::{create_dir, hard_link, read_to_string, remove_dir_all, write, File, OpenOptions},
     io::{ErrorKind, Read, Seek, SeekFrom},
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
@@ -10,7 +10,7 @@ use std::{
 
 use libc::pid_t;
 use log::{debug, info};
-use procfs::process::{MMPermissions, MemoryMap, Process};
+use procfs::process::{FDInfo, MMPermissions, MemoryMap, Process};
 
 use crate::ptrace::{PTrace, Registers};
 
@@ -64,6 +64,7 @@ pub struct Checkpointer {
 
 pub struct VolatileCheckpoint {
     pub regs: Registers,
+    pub files: Vec<(FDInfo, u64)>,
     pub maps: Vec<MemoryMap>,
     pub mems: Vec<(usize, Vec<u8>)>,
     pub reusable_mems: Vec<(usize, usize)>,
@@ -93,6 +94,19 @@ impl Checkpointer {
         info!("Attached ptrace");
 
         let regs = ptrace.get_regs()?;
+    
+        let mut files = vec![]; // I want try_collect
+        for file in self.procfs.fd()? {
+            let file = file?;
+        
+            // I feel like procfs should do this for me
+            // Also because it doesn't I should probably make my own
+            // fdinfo type struct so I don't have to have this vector of tuples
+            let fdinfo_raw = read_to_string(format!("/proc/{}/fdinfo/{:?}", ptrace.pid, file.fd))?;
+            let offset: u64 = fdinfo_raw.strip_prefix("pos:\t").unwrap().lines().next().unwrap().parse()?;
+
+            files.push((file, offset));
+        }
 
         let mut checkpointed_maps = vec![];
         for map in maps {
@@ -155,6 +169,7 @@ impl Checkpointer {
 
         Ok(VolatileCheckpoint {
             regs,
+            files,
             maps: checkpointed_maps,
             mems,
             reusable_mems,
@@ -214,6 +229,7 @@ impl Checkpointer {
         {
             serde_json::to_writer(File::create(cp_dir.join("regs"))?, &v_cp.regs)?;
             serde_json::to_writer(File::create(cp_dir.join("maps"))?, &v_cp.maps)?;
+            serde_json::to_writer(File::create(cp_dir.join("files"))?, &v_cp.files)?;
         }
 
         self.step

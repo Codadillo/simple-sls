@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     ffi::CString,
-    fs::{File, Permissions},
+    fs::{metadata, File, Permissions},
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -17,11 +17,12 @@ use goblin::{
     },
 };
 use libc::{
-    exit, pid_t, SYS_close, SYS_getpid, SYS_kill, SYS_mmap, SYS_munmap, SYS_open, MAP_FIXED,
-    MAP_PRIVATE, O_RDONLY, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP, S_IXUSR,
+    exit, pid_t, SYS_close, SYS_dup2, SYS_getpid, SYS_kill, SYS_lseek, SYS_mmap, SYS_munmap,
+    SYS_open, MAP_FIXED, MAP_PRIVATE, O_RDONLY, SEEK_SET, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR,
+    S_IXGRP, S_IXUSR,
 };
 use log::{debug, info};
-use procfs::process::MemoryMap;
+use procfs::process::{FDInfo, FDTarget, MemoryMap};
 use scroll::Pwrite;
 
 use crate::{
@@ -35,12 +36,13 @@ pub fn create_bootstrapper(
     output_path: impl AsRef<Path>,
     checkpoint_dir: &PathBuf,
     maps: Vec<MemoryMap>,
+    files: Vec<(FDInfo, u64)>,
 ) -> Result<(), Box<dyn Error>> {
     // TODO: automatically find a non-conflicting vaddr from maps
     let vaddr = 0xe0000;
     let data_addr = vaddr + header64::SIZEOF_EHDR as u64 + program_header64::SIZEOF_PHDR as u64;
 
-    let (data, program) = assemble_bs_code(checkpoint_dir, maps, vaddr, data_addr)?;
+    let (data, program) = assemble_bs_code(checkpoint_dir, maps, files, vaddr, data_addr)?;
 
     write_bs_elf(output_path, vaddr, data, program)
 }
@@ -99,10 +101,12 @@ pub fn write_bs_elf(
 pub fn assemble_bs_code(
     cp_dir: &PathBuf,
     maps: Vec<MemoryMap>,
+    files: Vec<(FDInfo, u64)>,
     vaddr: u64,
     data_addr: u64,
 ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
     let mut data: Vec<u8> = vec![];
+
     let mut mmap_args = vec![];
     for (i, map) in maps.into_iter().enumerate() {
         let addr = map.address.0;
@@ -133,6 +137,25 @@ pub fn assemble_bs_code(
         data.extend(raw_path.as_bytes_with_nul());
 
         mmap_args.push((addr, len, prot, flags, path_ptr, offset));
+    }
+
+    let mut open_args = vec![];
+    for (file, offset) in files {
+        let FDTarget::Path(path) = file.target else {
+            // TODO: these files probably shouldn't even be checkpointed if we're just going to ignore them
+            continue;
+        };
+
+        let meta = metadata(&path)?;
+        if !meta.is_file() {
+            continue;
+        }
+
+        let path_ptr = data.len();
+        let raw_path = CString::new(path.to_str().unwrap())?;
+        data.extend(raw_path.as_bytes_with_nul());
+
+        open_args.push((file.fd, path_ptr, file.mode, offset));
     }
 
     {
@@ -182,6 +205,43 @@ pub fn assemble_bs_code(
             c.syscall()?;
         }
 
+        // open all the checkpointed files
+        // TODO: this loop shouldn't be unrolled
+        for (fd, path_ptr, mode, offset) in open_args {
+            let path_ptr = data_addr + path_ptr as u64;
+
+            // open the file
+            c.mov(rdi, path_ptr)?;
+            c.mov(rsi, mode as u64)?;
+            c.mov(rdx, 0o666u64)?;
+            c.mov(rax, SYS_open)?;
+            c.syscall()?;
+
+            // if it's not already the correct fd number, we're good
+            let mut opened = c.create_label();
+            c.cmp(eax, fd)?;
+            c.je(opened)?;
+
+            // otherwise, dup2 it to the right number
+            c.mov(rdi, rax)?;
+            c.mov(rsi, fd as u64)?;
+            c.mov(rax, SYS_dup2)?;
+            c.syscall()?;
+
+            // close the old file descriptor
+            c.mov(rax, SYS_close)?;
+            c.syscall()?;
+
+            c.set_label(&mut opened)?;
+
+            // seek the file to the correct offset
+            c.mov(rdi, fd as u64)?;
+            c.mov(rsi, offset)?;
+            c.mov(rdx, SEEK_SET as u64)?;
+            c.mov(rax, SYS_lseek)?;
+            c.syscall()?;
+        }
+
         // have the bootstrapper stop itself
         c.mov(rax, SYS_getpid)?;
         c.syscall()?;
@@ -214,11 +274,12 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
 
     let regs: Registers = serde_json::from_reader(File::open(cp_path.join("regs"))?)?;
     let maps: Vec<MemoryMap> = serde_json::from_reader(File::open(cp_path.join("maps"))?)?;
+    let files: Vec<(FDInfo, u64)> = serde_json::from_reader(File::open(cp_path.join("files"))?)?;
 
     // Create the bootstrapper for the last checkpoint
     info!("Creating bootstrapper binary");
     let bs_path = cp_path.join("bs");
-    create_bootstrapper(&bs_path, &cp_path, maps)?;
+    create_bootstrapper(&bs_path, &cp_path, maps, files)?;
 
     // Run the bootstrapper
     info!("Running bootstrapper");
