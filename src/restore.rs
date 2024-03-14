@@ -235,6 +235,9 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
         ptrace.set_regs(regs)?;
         ptrace.detach()?;
 
+        // println!("{}", ptrace.pid);
+        // bootstrap.wait()?;
+
         info!("The process is fully restored");
         ptrace.resume()?;
     }
@@ -243,6 +246,6 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
     // let it run itself out
     let res = bootstrap.wait()?;
 
-    info!("Restored process exited with status {res}, exiting");
+    println!("Restored process exited with status {res}, exiting");
     unsafe { exit(res.code().unwrap_or(0)) };
 }

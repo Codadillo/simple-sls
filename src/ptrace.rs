@@ -1,9 +1,9 @@
 use std::{error, io, mem::MaybeUninit, ptr};
 
 use libc::{
-    c_int, kill, pid_t, ptrace, user_fpregs_struct, user_regs_struct, waitpid, PTRACE_ATTACH,
-    PTRACE_DETACH, PTRACE_GETFPREGS, PTRACE_GETREGS, PTRACE_SETFPREGS, PTRACE_SETREGS, SIGCONT,
-    SIGSTOP, WUNTRACED,
+    c_int, kill, pid_t, ptrace, user_fpregs_struct, user_regs_struct, waitpid,
+    PTRACE_ATTACH, PTRACE_DETACH, PTRACE_GETFPREGS, PTRACE_GETREGS, PTRACE_SETFPREGS,
+    PTRACE_SETREGS, SIGCONT, SIGSTOP, WUNTRACED,
 };
 use serde::{Deserialize, Serialize};
 
@@ -178,12 +178,21 @@ impl PTrace {
     ///
     /// The process should be paused (e.g. with `Self::Stop`) when calling this
     pub fn set_regs(&self, Registers { regs, fregs }: Registers) -> io::Result<()> {
-        let res = unsafe { ptrace(PTRACE_SETREGS, self.pid, ptr::null() as *const (), &regs) };
+        let raw_regs: user_regs_struct = regs.into();
+        let res = unsafe { ptrace(PTRACE_SETREGS, self.pid, ptr::null() as *const (), &raw_regs) };
         if res < 0 {
             return Err(io::Error::last_os_error());
         }
 
-        let res = unsafe { ptrace(PTRACE_SETFPREGS, self.pid, ptr::null() as *const (), &fregs) };
+        
+        let raw_fregs = unsafe {
+            let mut raw_fregs: MaybeUninit<user_fpregs_struct> = MaybeUninit::uninit();
+            raw_fregs.as_mut_ptr().write_bytes(0, 1);
+            fregs.into(raw_fregs.as_mut_ptr().as_mut().unwrap()); // TODO: you know
+            raw_fregs.assume_init()
+        };
+    
+        let res = unsafe { ptrace(PTRACE_SETFPREGS, self.pid, ptr::null() as *const (), &raw_fregs) };
         if res < 0 {
             return Err(io::Error::last_os_error());
         }

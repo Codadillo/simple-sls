@@ -18,6 +18,7 @@ use crate::ptrace::{PTrace, Registers};
 // - Threads (TLS, etc.)
 // -- what do with vvar and vdso
 // - File descriptors (basic)
+// - more register sets (vectors)
 
 pub struct StepData {
     pub seq: u64,
@@ -33,12 +34,9 @@ impl StepData {
             .write(true)
             .open(path.join("seq"))?;
 
-        let mut seq_buf = vec![];
-        seq_file.read_to_end(&mut seq_buf)?;
-        let seq = seq_buf
-            .try_into()
-            .map(|b| u64::from_le_bytes(b))
-            .unwrap_or(0);
+        let mut seq_buf = String::new();
+        seq_file.read_to_string(&mut seq_buf)?;
+        let seq: u64 = seq_buf.parse().unwrap_or(0);
 
         let last_maps = if seq != 0 {
             let map_file = File::open(path.join(seq.to_string()).join("maps"))?;
@@ -216,7 +214,7 @@ impl Checkpointer {
 
         self.step
             .seq_file
-            .write_all_at(&self.step.seq.to_le_bytes(), 0)?;
+            .write_all_at(self.step.seq.to_string().as_bytes(), 0)?;
         self.step.last_maps = v_cp.maps;
 
         info!("Completed checkpoint");
