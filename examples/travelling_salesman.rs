@@ -1,5 +1,6 @@
-use std::process;
+use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt, process};
 
+use libc::O_SYNC;
 use rand::{prelude::*, rngs::SmallRng};
 use travelling_salesman::brute_force;
 
@@ -17,4 +18,15 @@ fn main() {
     let tour = brute_force::solve(&towns);
 
     println!("Finished: {:?}", tour.route);
+
+    if let Some(path) = std::env::args().nth(1) {
+        let mut out = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .custom_flags(O_SYNC)
+            .open(path)
+            .unwrap();
+
+        writeln!(out, "{:?}", tour.route).unwrap();
+    }
 }
