@@ -298,6 +298,8 @@ impl Checkpointer {
             let remaining_min_period = min_period.as_secs_f64() - cp_secs;
 
             wait_time = Duration::from_secs_f64(remaining_free_run_time.max(remaining_min_period));
+
+            info!("Waiting {wait_time:?} before next checkpoint (adaptive)");
         }
     }
 

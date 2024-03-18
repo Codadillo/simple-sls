@@ -1,7 +1,7 @@
 use std::{
     error,
-    fs::{create_dir, write, File},
-    io,
+    fs::{create_dir, File},
+    io::{self, Write},
     time::Duration,
 };
 
@@ -25,7 +25,16 @@ enum Args {
         /// If specified, rather than just checkpointing once,
         /// we will checkpoint once every period seconds.
         #[arg(short = 't', long)]
-        period: Option<u64>,
+        period: Option<f64>,
+
+        /// Runs checkpointing with an adaptive period
+        /// such that it will never impose more than `overhead`` percent
+        /// overhead on the checkpointed program.
+        ///
+        /// If `period` is not specified, the minimum period will be
+        /// 1 second, otherwise `period` is used as the minimum period.
+        #[arg(short, long)]
+        overhead: Option<f64>,
 
         /// Checkpoint directory path.
         #[arg(short, long, default_value = "/tmp/slsdir")]
@@ -67,6 +76,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             cpath,
             max,
             reset,
+            overhead,
             stats,
         } => {
             if reset {
@@ -79,23 +89,32 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 e => e?,
             };
 
+            let stats = match stats {
+                Some(path) => Some(File::create(path)?),
+                None => None,
+            };
+
             let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
 
-            match period {
-                Some(s) => {
-                    let stats = match stats {
-                        Some(path) => Some(File::create(path)?),
-                        None => None,
-                    };
+            if let Some(overhead) = overhead {
+                cp.run_adaptive(
+                    overhead,
+                    Duration::from_secs_f64(period.unwrap_or(1.)),
+                    max as u64,
+                    stats,
+                )?;
 
-                    cp.run(Duration::from_secs(s), max as u64, stats)?
-                }
+                return Ok(());
+            }
+
+            match period {
+                Some(s) => cp.run(Duration::from_secs_f64(s), max as u64, stats)?,
                 None => {
                     let vcp_time = cp.checkpoint()?;
                     cp.cull_checkpoints(max as u64)?;
 
-                    if let Some(stats) = stats {
-                        write(stats, vcp_time.as_nanos().to_string())?;
+                    if let Some(mut stats) = stats {
+                        write!(stats, "{}", vcp_time.as_nanos())?;
                     }
                 }
             }
