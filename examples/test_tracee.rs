@@ -1,4 +1,7 @@
-use std::{io::{stdout, Write}, process::id};
+use std::{
+    io::{stdout, Write},
+    process::id,
+};
 
 fn main() {
     println!("pid: {}", id());
@@ -10,7 +13,7 @@ fn main() {
 
         if a % (u32::MAX / 4) == 0 {
             b = b.wrapping_add(1);
-    
+
             print!("{b} ");
             stdout().flush().unwrap();
         }
