@@ -21,7 +21,7 @@ enum Args {
         #[arg(short, long)]
         pid: pid_t,
 
-        /// Checkpoint period.
+        /// Checkpoint period in seconds.
         /// If specified, rather than just checkpointing once,
         /// we will checkpoint once every period seconds.
         #[arg(short = 't', long)]
@@ -35,6 +35,11 @@ enum Args {
         /// 1 second, otherwise `period` is used as the minimum period.
         #[arg(short, long)]
         overhead: Option<f64>,
+
+        /// The maximum checkpoint period in seconds.
+        /// Only takes effect if `overhead` is specified.
+        #[arg(long)]
+        max_period: Option<f64>,
 
         /// Checkpoint directory path.
         #[arg(short, long, default_value = "/tmp/slsdir")]
@@ -73,6 +78,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         Args::Checkpoint {
             pid,
             period,
+            max_period,
             cpath,
             max,
             reset,
@@ -99,7 +105,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             if let Some(overhead) = overhead {
                 cp.run_adaptive(
                     overhead,
-                    Duration::from_secs_f64(period.unwrap_or(1.)),
+                    period.map(Duration::from_secs_f64),
+                    max_period.map(Duration::from_secs_f64),
                     max as u64,
                     stats,
                 )?;

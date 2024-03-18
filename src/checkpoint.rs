@@ -264,13 +264,14 @@ impl Checkpointer {
     pub fn run_adaptive(
         &mut self,
         max_overhead: f64,
-        min_period: Duration,
+        min_period: Option<Duration>,
+        max_period: Option<Duration>,
         max_cps: u64,
         mut stats: Option<impl Write>,
     ) -> Result<(), Box<dyn Error>> {
         assert!(max_overhead >= 0.);
 
-        let mut wait_time = min_period;
+        let mut wait_time = min_period.unwrap_or(max_period.unwrap_or(Duration::from_secs(0)));
         loop {
             thread::sleep(wait_time);
 
@@ -284,8 +285,7 @@ impl Checkpointer {
                 writeln!(stats, "{},{}", paused_time.as_nanos(), cp_time.as_nanos())?;
             }
 
-            let paused_secs = paused_time.as_secs_f64();
-            let cp_secs = start.elapsed().as_secs_f64();
+            let cp_time = start.elapsed();
 
             // Calculate how long we should let the process run freely
             // so that this checkpoint added at most `max_overhead` percent
@@ -293,11 +293,17 @@ impl Checkpointer {
             //
             // max_overhead = paused_time / runtime
             // => runtime = paused_time / max_overhead
-            let free_run_time = paused_secs / max_overhead;
-            let remaining_free_run_time = free_run_time - (cp_secs - paused_secs);
-            let remaining_min_period = min_period.as_secs_f64() - cp_secs;
+            let free_run_time = Duration::from_secs_f64(paused_time.as_secs_f64() / max_overhead);
+            let remaining_free_run_time = free_run_time - (cp_time - paused_time);
+            wait_time = remaining_free_run_time;
 
-            wait_time = Duration::from_secs_f64(remaining_free_run_time.max(remaining_min_period));
+            if let Some(min_period) = min_period {
+                wait_time = wait_time.max(min_period - cp_time);
+            }
+
+            if let Some(max_period) = max_period {
+                wait_time = wait_time.min(max_period - cp_time);
+            }
 
             info!("Waiting {wait_time:?} before next checkpoint (adaptive)");
         }
