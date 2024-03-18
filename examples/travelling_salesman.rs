@@ -4,7 +4,7 @@ use libc::O_SYNC;
 use rand::{prelude::*, rngs::SmallRng};
 use travelling_salesman::brute_force;
 
-// with this set to 11, it takes me about 10 seconds to run
+// with this set to 11 on a debug build, it takes me about 10 seconds to run
 const TOWN_COUNT: usize = 11;
 
 fn main() {
@@ -23,6 +23,7 @@ fn main() {
         let mut out = OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .custom_flags(O_SYNC)
             .open(path)
             .unwrap();

@@ -10,9 +10,12 @@ use std::{
 
 use libc::pid_t;
 use log::{debug, info};
-use procfs::process::{FDInfo, MMPermissions, MemoryMap, Process};
+use procfs::process::{FDInfo, MMPermissions, MMapPath, MemoryMap, Process};
 
-use crate::ptrace::{PTrace, Registers};
+use crate::{
+    ptrace::{PTrace, Registers},
+    restore,
+};
 
 // TODOS:
 // - Threads (TLS, etc.)
@@ -116,6 +119,20 @@ impl Checkpointer {
 
         let mut checkpointed_maps = vec![];
         for map in maps {
+            // TODO: this is a way of avoiding checkpointing the bootstrapper's memory
+            match map.pathname {
+                MMapPath::Path(path)
+                    if path
+                        .to_str()
+                        .filter(|p| p.contains(restore::BS_GUID))
+                        .is_some() =>
+                {
+                    debug!("Ignoring bootstrapper memory mapping {path:?}");
+                    continue;
+                }
+                _ => {}
+            }
+
             let immutable = !map.perms.contains(MMPermissions::WRITE);
 
             if immutable {

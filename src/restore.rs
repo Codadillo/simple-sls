@@ -5,7 +5,7 @@ use std::{
     io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
 };
 
 use goblin::{
@@ -17,9 +17,9 @@ use goblin::{
     },
 };
 use libc::{
-    exit, pid_t, SYS_close, SYS_dup2, SYS_getpid, SYS_kill, SYS_lseek, SYS_mmap, SYS_munmap,
-    SYS_open, MAP_FIXED, MAP_PRIVATE, O_RDONLY, SEEK_SET, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR,
-    S_IXGRP, S_IXUSR,
+    pid_t, SYS_close, SYS_dup2, SYS_getpid, SYS_kill, SYS_lseek, SYS_mmap, SYS_munmap, SYS_open,
+    MAP_FIXED, MAP_PRIVATE, O_RDONLY, SEEK_SET, SIGSTOP, S_IRGRP, S_IRUSR, S_IWUSR, S_IXGRP,
+    S_IXUSR,
 };
 use log::{debug, info};
 use procfs::process::{FDInfo, FDTarget, MemoryMap};
@@ -31,6 +31,12 @@ use crate::{
 };
 
 // TODO: more portability, this whole thing is pretty messy
+
+// TODO: this is used so that the checkpointer doesn't checkpoint
+// the bootstrapper's memory, which is very scuffed.
+// Ideally the bootstrapper's memory isn't in the address space
+// post-restoraiton for the checkpointer (or anyone else) to see anyways.
+pub const BS_GUID: &str = "bs_43b39ed1-7e9e-4c8d-9d87-540c42dfccbd";
 
 pub fn create_bootstrapper(
     output_path: impl AsRef<Path>,
@@ -151,6 +157,7 @@ pub fn assemble_bs_code(
             continue;
         }
 
+        // TODO: make the path absolute
         let path_ptr = data.len();
         let raw_path = CString::new(path.to_str().unwrap())?;
         data.extend(raw_path.as_bytes_with_nul());
@@ -260,7 +267,7 @@ pub fn assemble_bs_code(
     }
 }
 
-pub fn restore_checkpoint(path: &PathBuf, hang: bool) -> Result<(), Box<dyn Error>> {
+pub fn restore_checkpoint(path: &PathBuf, hang: bool) -> Result<Child, Box<dyn Error>> {
     info!("Restoring checkpoint from {path:?}");
 
     // Read in the last checkpoint
@@ -278,7 +285,7 @@ pub fn restore_checkpoint(path: &PathBuf, hang: bool) -> Result<(), Box<dyn Erro
 
     // Create the bootstrapper for the last checkpoint
     info!("Creating bootstrapper binary");
-    let bs_path = cp_path.join("bs");
+    let bs_path = cp_path.join(BS_GUID);
     create_bootstrapper(&bs_path, &cp_path, maps, files)?;
 
     // Run the bootstrapper
@@ -288,6 +295,10 @@ pub fn restore_checkpoint(path: &PathBuf, hang: bool) -> Result<(), Box<dyn Erro
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()?;
+
+    // TODO: the process could exit here leading to
+    // the following code producing an error even though
+    // it just means that the restored process has completed
 
     {
         let mut ptrace = PTrace::new(bootstrap.id() as pid_t);
@@ -307,9 +318,5 @@ pub fn restore_checkpoint(path: &PathBuf, hang: bool) -> Result<(), Box<dyn Erro
     }
 
     // The bootstrapper should now be the restored process
-    // let it run itself out
-    let res = bootstrap.wait()?;
-
-    println!("Restored process exited with status {res}, exiting");
-    unsafe { exit(res.code().unwrap_or(0)) };
+    return Ok(bootstrap);
 }

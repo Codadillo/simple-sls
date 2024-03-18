@@ -2,6 +2,7 @@ use std::{
     error,
     fs::{create_dir, File},
     io::{self, Write},
+    process::exit,
     time::Duration,
 };
 
@@ -66,7 +67,7 @@ enum Args {
         /// If specified, the restored program's pid will be printed and
         /// it will remain in a SIGSTOPed state so you can, for example,
         /// attach gdb to it and debug the restoration.
-        #[arg(short, long)]
+        #[arg(long)]
         hang: bool,
     },
 }
@@ -128,7 +129,16 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
 
         Args::Restore { cpath, hang } => {
-            restore_checkpoint(&cpath.into(), hang)?;
+            let mut restored = restore_checkpoint(&cpath.into(), hang)?;
+            let res = restored.wait()?;
+
+            // arguably this shouldn't be here because we want stderr to be
+            // exactly as it would be were the restored process running.
+            // but also we don't care about preserving correctness of side effects
+            // so it's ok.
+            eprintln!("Restored process exited with status {res}, exiting");
+
+            exit(res.code().unwrap_or(0));
         }
     }
 
