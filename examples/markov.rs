@@ -1,4 +1,8 @@
-use std::{fs::read_dir, time::Instant};
+use std::{
+    fs::read_dir,
+    io::{stdin, BufRead},
+    time::Instant,
+};
 
 use markov::Chain;
 
@@ -22,9 +26,13 @@ fn main() {
         println!("Trained in {:?}", start.elapsed())
     }
 
-    for s in chain.str_iter_for(100) {
-        print!("{s} ");
-    }
+    for line in stdin().lock().lines() {
+        let len: usize = line.unwrap().parse().unwrap();
 
-    println!("");
+        for s in chain.str_iter_for(len) {
+            print!("{s} ");
+        }
+
+        println!("");
+    }
 }
