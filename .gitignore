@@ -3,3 +3,4 @@ Cargo.lock
 cps/
 .gdb_history
 no-aslr
+examples/dump/
