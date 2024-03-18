@@ -1,6 +1,6 @@
 use std::{
     error,
-    fs::create_dir,
+    fs::{create_dir, write, File},
     io,
     time::Duration,
 };
@@ -8,7 +8,8 @@ use std::{
 use clap::{arg, command, Parser};
 use libc::pid_t;
 use project::{
-    checkpoint::{self, Checkpointer}, restore::restore_checkpoint
+    checkpoint::{self, Checkpointer},
+    restore::restore_checkpoint,
 };
 
 /// SLSify compute-oriented applications
@@ -37,12 +38,22 @@ enum Args {
         /// Whether or not to delete the checkpoint directory first
         #[arg(short, long)]
         reset: bool,
+
+        /// A path to store checkpointing statistics.
+        #[arg(short, long)]
+        stats: Option<String>,
     },
 
     Restore {
         /// Checkpoint directory path
         #[arg(short, long, default_value = "/tmp/slsdir")]
         cpath: String,
+
+        /// If specified, the restored program's pid will be printed and
+        /// it will remain in a SIGSTOPed state so you can, for example,
+        /// attach gdb to it and debug the restoration.
+        #[arg(short, long)]
+        hang: bool,
     },
 }
 
@@ -56,6 +67,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             cpath,
             max,
             reset,
+            stats,
         } => {
             if reset {
                 checkpoint::maybe_remove_dir_all(&cpath)?;
@@ -70,18 +82,27 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             let mut cp = Checkpointer::attach(pid, cpath.clone().into())?;
 
             match period {
-                Some(s) => cp.run(Duration::from_secs(s), max as u64)?,
+                Some(s) => {
+                    let stats = match stats {
+                        Some(path) => Some(File::create(path)?),
+                        None => None,
+                    };
+
+                    cp.run(Duration::from_secs(s), max as u64, stats)?
+                }
                 None => {
-                    cp.checkpoint()?;
+                    let vcp_time = cp.checkpoint()?;
                     cp.cull_checkpoints(max as u64)?;
+
+                    if let Some(stats) = stats {
+                        write(stats, vcp_time.as_nanos().to_string())?;
+                    }
                 }
             }
-
-            // child.wait()?;
         }
 
-        Args::Restore { cpath } => {
-            restore_checkpoint(&cpath.into())?;
+        Args::Restore { cpath, hang } => {
+            restore_checkpoint(&cpath.into(), hang)?;
         }
     }
 

@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     fs::{create_dir, hard_link, read_to_string, remove_dir_all, write, File, OpenOptions},
-    io::{ErrorKind, Read, Seek, SeekFrom},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
     thread,
@@ -238,14 +238,24 @@ impl Checkpointer {
         Ok(pause_time)
     }
 
-    pub fn run(&mut self, period: Duration, max_cps: u64) -> Result<(), Box<dyn Error>> {
+    pub fn run(
+        &mut self,
+        period: Duration,
+        max_cps: u64,
+        mut stats: Option<impl Write>,
+    ) -> Result<(), Box<dyn Error>> {
         let mut wait_time = period;
         loop {
             thread::sleep(wait_time);
             let start = Instant::now();
 
-            self.checkpoint()?;
+            let vcp_time = self.checkpoint()?;
             self.cull_checkpoints(max_cps)?;
+
+            if let Some(stats) = &mut stats {
+                let cp_time = start.elapsed();
+                writeln!(stats, "{},{}", vcp_time.as_nanos(), cp_time.as_nanos())?;
+            }
 
             wait_time = period.saturating_sub(start.elapsed());
         }
@@ -256,6 +266,7 @@ impl Checkpointer {
         max_overhead: f64,
         min_period: Duration,
         max_cps: u64,
+        mut stats: Option<impl Write>,
     ) -> Result<(), Box<dyn Error>> {
         assert!(max_overhead >= 0.);
 
@@ -265,10 +276,16 @@ impl Checkpointer {
 
             let start = Instant::now();
 
-            let paused_time = self.checkpoint()?.as_secs_f64();
+            let paused_time = self.checkpoint()?;
             self.cull_checkpoints(max_cps)?;
 
-            let cp_time = start.elapsed().as_secs_f64();
+            if let Some(stats) = &mut stats {
+                let cp_time = start.elapsed();
+                writeln!(stats, "{},{}", paused_time.as_nanos(), cp_time.as_nanos())?;
+            }
+
+            let paused_secs = paused_time.as_secs_f64();
+            let cp_secs = start.elapsed().as_secs_f64();
 
             // Calculate how long we should let the process run freely
             // so that this checkpoint added at most `max_overhead` percent
@@ -276,9 +293,9 @@ impl Checkpointer {
             //
             // max_overhead = paused_time / runtime
             // => runtime = paused_time / max_overhead
-            let free_run_time = paused_time / max_overhead;
-            let remaining_free_run_time = free_run_time - (cp_time - paused_time);
-            let remaining_min_period = min_period.as_secs_f64() - cp_time;
+            let free_run_time = paused_secs / max_overhead;
+            let remaining_free_run_time = free_run_time - (cp_secs - paused_secs);
+            let remaining_min_period = min_period.as_secs_f64() - cp_secs;
 
             wait_time = Duration::from_secs_f64(remaining_free_run_time.max(remaining_min_period));
         }

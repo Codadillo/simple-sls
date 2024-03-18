@@ -260,7 +260,7 @@ pub fn assemble_bs_code(
     }
 }
 
-pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
+pub fn restore_checkpoint(path: &PathBuf, hang: bool) -> Result<(), Box<dyn Error>> {
     info!("Restoring checkpoint from {path:?}");
 
     // Read in the last checkpoint
@@ -297,11 +297,13 @@ pub fn restore_checkpoint(path: &PathBuf) -> Result<(), Box<dyn Error>> {
         ptrace.set_regs(regs)?;
         ptrace.detach()?;
 
-        // println!("{}", ptrace.pid);
-        // bootstrap.wait()?;
-
-        info!("The process is fully restored");
-        ptrace.resume()?;
+        if hang {
+            println!("The restored proccess's pid is: {}", ptrace.pid);
+            bootstrap.wait()?;
+        } else {
+            info!("The process is fully restored");
+            ptrace.resume()?;
+        }
     }
 
     // The bootstrapper should now be the restored process
