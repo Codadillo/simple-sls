@@ -5,7 +5,7 @@ use rand::{prelude::*, rngs::SmallRng};
 use travelling_salesman::brute_force;
 
 // with this set to 11 on a debug build, it takes me about 10 seconds to run
-const TOWN_COUNT: usize = 11;
+const TOWN_COUNT: usize = 12;
 
 fn main() {
     println!("{}", process::id());

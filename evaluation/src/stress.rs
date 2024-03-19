@@ -14,7 +14,7 @@ use std::{
 };
 
 const CP_DIR: &str = "cps";
-const OUTPUT_DIR: &str = "out";
+const OUTPUT_DIR: &str = "out/stress";
 const BIN: &str = "../target/debug/examples/travelling_salesman";
 const KILL_TIME: Range<f64> = 0.5..1.;
 

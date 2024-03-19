@@ -190,6 +190,10 @@ impl Checkpointer {
             checkpointed_maps.push(map);
         }
 
+        // This is redundant because the process should 
+        // get resumed when `ptrace` is dropped anyways.
+        ptrace.resume()?;
+
         Ok(VolatileCheckpoint {
             regs,
             files,
@@ -296,12 +300,12 @@ impl Checkpointer {
 
             let paused_time = self.checkpoint()?;
             self.cull_checkpoints(max_cps)?;
-
+            
             if let Some(stats) = &mut stats {
                 let cp_time = start.elapsed();
                 writeln!(stats, "{},{}", paused_time.as_nanos(), cp_time.as_nanos())?;
             }
-
+            
             let cp_time = start.elapsed();
 
             // Calculate how long we should let the process run freely
@@ -311,15 +315,15 @@ impl Checkpointer {
             // max_overhead = paused_time / runtime
             // => runtime = paused_time / max_overhead
             let free_run_time = Duration::from_secs_f64(paused_time.as_secs_f64() / max_overhead);
-            let remaining_free_run_time = free_run_time - (cp_time - paused_time);
+            let remaining_free_run_time = free_run_time.saturating_sub(cp_time - paused_time);
             wait_time = remaining_free_run_time;
 
             if let Some(min_period) = min_period {
-                wait_time = wait_time.max(min_period - cp_time);
+                wait_time = wait_time.max(min_period.saturating_sub(cp_time));
             }
 
             if let Some(max_period) = max_period {
-                wait_time = wait_time.min(max_period - cp_time);
+                wait_time = wait_time.min(max_period.saturating_sub(cp_time));
             }
 
             info!("Waiting {wait_time:?} before next checkpoint (adaptive)");

@@ -7,6 +7,14 @@ edition = "2021"
 name = "stress"
 path = "src/stress.rs"
 
+[[bin]]
+name = "adaptive"
+path = "src/adaptive.rs"
+
+[[bin]]
+name = "adaptive-simple"
+path = "src/adaptive-simple.rs"
+
 [dependencies]
 env_logger = "0.11.3"
 project = { path = ".." }
