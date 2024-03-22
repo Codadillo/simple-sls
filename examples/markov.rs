@@ -10,6 +10,7 @@ use markov::Chain;
 const DIRECTORY: &str = "examples/dump";
 
 const MAX_TRAIN_TIME: Duration = Duration::from_secs(60 * 5); 
+const GEN_FROM_STDIN: bool = false;
 
 fn main() {
     let mut chain = Chain::new();
@@ -31,6 +32,15 @@ fn main() {
         if training_start.elapsed() >= MAX_TRAIN_TIME {
             break;
         }
+    }
+
+    if !GEN_FROM_STDIN {
+        for s in chain.str_iter_for(100) {
+            print!("{s} ");
+        }
+
+        println!("");
+        return;
     }
 
     for line in stdin().lock().lines() {
