@@ -1,7 +1,7 @@
 use std::{
     fs::read_dir,
     io::{stdin, BufRead},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use markov::Chain;
@@ -9,9 +9,12 @@ use markov::Chain;
 // This is gitignored out because it's massive.
 const DIRECTORY: &str = "examples/dump";
 
+const MAX_TRAIN_TIME: Duration = Duration::from_secs(60 * 5); 
+
 fn main() {
     let mut chain = Chain::new();
 
+    let training_start = Instant::now();
     let dir = read_dir(DIRECTORY).unwrap();
     for dir_entry in dir {
         let path = dir_entry.unwrap().path();
@@ -23,7 +26,11 @@ fn main() {
         // formatted a certain way, but idc
         chain.feed_file(path).unwrap();
 
-        println!("Trained in {:?}", start.elapsed())
+        println!("Trained in {:?}", start.elapsed());
+
+        if training_start.elapsed() >= MAX_TRAIN_TIME {
+            break;
+        }
     }
 
     for line in stdin().lock().lines() {
