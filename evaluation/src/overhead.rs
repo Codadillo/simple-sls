@@ -56,7 +56,7 @@ fn main() {
     let period = Duration::from_secs_f64(PERIOD);
     let output = PathBuf::from(output_dir);
     let mut stats = File::create(output.join("stats")).unwrap();
-    
+
     let mut total_cp_time = Duration::from_secs(0);
     let mut total_real_time = Duration::from_secs(0);
 
@@ -75,5 +75,8 @@ fn main() {
         total_real_time += real;
     }
 
-    println!("Average slowdown: {}", total_cp_time.as_secs_f64() / total_real_time.as_secs_f64());
+    println!(
+        "Average slowdown: {}",
+        total_cp_time.as_secs_f64() / total_real_time.as_secs_f64()
+    );
 }

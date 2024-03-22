@@ -1,5 +1,8 @@
 use std::{
-    fs::{create_dir_all, File}, path::PathBuf, process::Command, time::Instant
+    fs::{create_dir_all, write, File},
+    path::PathBuf,
+    process::Command,
+    time::Instant,
 };
 
 use project::checkpoint::{maybe_remove_dir_all, Checkpointer};
@@ -30,7 +33,7 @@ fn main() {
         None,
         None,
         3,
-        Some(File::create(format!("{output_dir}/times")).unwrap()),
+        Some(File::create(format!("{output_dir}/cp_times")).unwrap()),
     ) {
         println!("assuming process exited, {e:?}");
     }
@@ -44,9 +47,17 @@ fn main() {
     let real_elapsed = real_start.elapsed();
     println!("real version exited with '{res}' in {real_elapsed:?}");
 
+    let cp_secs = cp_elapsed.as_secs_f64();
+    let real_secs = real_elapsed.as_secs_f64();
     println!(
         "Measured overhead = {}, target overhead = {}",
-        cp_elapsed.as_secs_f64() / real_elapsed.as_secs_f64() - 1.,
+        cp_secs / cp_secs - 1.,
         OVERHEAD
     );
+
+    write(
+        format!("{output_dir}/overhead"),
+        format!("{cp_secs},{real_secs}"),
+    )
+    .unwrap();
 }
