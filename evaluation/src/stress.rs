@@ -7,6 +7,7 @@ use std::{
     fs::{create_dir_all, read_to_string, File},
     ops::Range,
     os::unix::process::ExitStatusExt,
+    path::PathBuf,
     process::Command,
     sync::{mpsc::channel, Arc, Barrier},
     thread,
@@ -21,13 +22,17 @@ const KILL_TIME: Range<f64> = 0.5..1.;
 fn main() {
     env_logger::init();
 
-    maybe_remove_dir_all(CP_DIR).unwrap();
-    maybe_remove_dir_all(OUTPUT_DIR).unwrap();
-    create_dir_all(CP_DIR).unwrap();
-    create_dir_all(OUTPUT_DIR).unwrap();
+    let bin_path = PathBuf::from(BIN);
+    let bin_name = bin_path.file_name().unwrap().to_str().unwrap();
+    let output_dir = format!("{OUTPUT_DIR}/{bin_name}");
 
-    let real_output_path = format!("{OUTPUT_DIR}/real");
-    let test_output_path = format!("{OUTPUT_DIR}/test");
+    maybe_remove_dir_all(CP_DIR).unwrap();
+    maybe_remove_dir_all(&output_dir).unwrap();
+    create_dir_all(CP_DIR).unwrap();
+    create_dir_all(&output_dir).unwrap();
+
+    let real_output_path = format!("{output_dir}/real");
+    let test_output_path = format!("{output_dir}/test");
 
     let mut real_proc = Command::new(BIN).arg(&real_output_path).spawn().unwrap();
 

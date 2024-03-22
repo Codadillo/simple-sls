@@ -1,7 +1,5 @@
 use std::{
-    fs::{create_dir_all, File},
-    process::Command,
-    time::Instant,
+    fs::{create_dir_all, File}, path::PathBuf, process::Command, time::Instant
 };
 
 use project::checkpoint::{maybe_remove_dir_all, Checkpointer};
@@ -13,10 +11,14 @@ const OUTPUT_DIR: &str = "out/adaptive";
 const OVERHEAD: f64 = 0.1;
 
 fn main() {
+    let bin_path = PathBuf::from(BIN);
+    let bin_name = bin_path.file_name().unwrap().to_str().unwrap();
+    let output_dir = format!("{OUTPUT_DIR}/{bin_name}");
+
     maybe_remove_dir_all(CP_DIR).unwrap();
-    maybe_remove_dir_all(OUTPUT_DIR).unwrap();
+    maybe_remove_dir_all(&output_dir).unwrap();
     create_dir_all(CP_DIR).unwrap();
-    create_dir_all(OUTPUT_DIR).unwrap();
+    create_dir_all(&output_dir).unwrap();
 
     let cp_start = Instant::now();
     let mut proc = Command::new(BIN).spawn().unwrap();
@@ -28,7 +30,7 @@ fn main() {
         None,
         None,
         3,
-        Some(File::create(format!("{OUTPUT_DIR}/times")).unwrap()),
+        Some(File::create(format!("{output_dir}/times")).unwrap()),
     ) {
         println!("assuming process exited, {e:?}");
     }

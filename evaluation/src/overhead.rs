@@ -44,13 +44,17 @@ fn run_trial(bin: &str, period: Duration, cp_stats: File) -> (Duration, Duration
 }
 
 fn main() {
+    let bin_path = PathBuf::from(BIN);
+    let bin_name = bin_path.file_name().unwrap().to_str().unwrap();
+    let output_dir = format!("{OUTPUT_DIR}/{bin_name}");
+
     maybe_remove_dir_all(CP_DIR).unwrap();
-    maybe_remove_dir_all(OUTPUT_DIR).unwrap();
+    maybe_remove_dir_all(&output_dir).unwrap();
     create_dir_all(CP_DIR).unwrap();
-    create_dir_all(OUTPUT_DIR).unwrap();
+    create_dir_all(&output_dir).unwrap();
 
     let period = Duration::from_secs_f64(PERIOD);
-    let output = PathBuf::from(OUTPUT_DIR);
+    let output = PathBuf::from(output_dir);
     let mut stats = File::create(output.join("stats")).unwrap();
     
     let mut total_cp_time = Duration::from_secs(0);
