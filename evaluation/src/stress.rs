@@ -5,13 +5,14 @@ use project::{
 use rand::prelude::*;
 use std::{
     fs::{create_dir_all, read_to_string, File},
+    io::Write,
     ops::Range,
     os::unix::process::ExitStatusExt,
     path::PathBuf,
     process::Command,
     sync::{mpsc::channel, Arc, Barrier},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const CP_DIR: &str = "cps";
@@ -33,6 +34,8 @@ fn main() {
 
     let real_output_path = format!("{output_dir}/real");
     let test_output_path = format!("{output_dir}/test");
+
+    let mut restore_output = File::create(format!("{output_dir}/restore")).unwrap();
 
     let mut real_proc = Command::new(BIN).arg(&real_output_path).spawn().unwrap();
 
@@ -56,6 +59,7 @@ fn main() {
 
             restore_b_.wait();
 
+            let restore_start = Instant::now();
             let proc = match restore_checkpoint(&CP_DIR.into(), false) {
                 Ok(p) => p,
                 Err(e) => {
@@ -63,6 +67,8 @@ fn main() {
                     return;
                 }
             };
+            let restore_time = restore_start.elapsed();
+            writeln!(restore_output, "{},", restore_time.as_nanos()).unwrap();
 
             pid = proc.id();
             p_send.send(proc).unwrap();
