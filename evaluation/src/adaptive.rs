@@ -51,7 +51,7 @@ fn main() {
     let real_secs = real_elapsed.as_secs_f64();
     println!(
         "Measured overhead = {}, target overhead = {}",
-        cp_secs / cp_secs - 1.,
+        cp_secs / real_secs - 1.,
         OVERHEAD
     );
 
