@@ -43,18 +43,18 @@ fn main() {
     let pid = proc.id();
 
     let (p_send, p_recv) = channel();
-    let (k_send, k_recv) = channel();
+    // let (k_send, k_recv) = channel();
     let restore_b = Arc::new(Barrier::new(2));
     let restore_b_ = restore_b.clone();
     thread::spawn(move || {
         let mut pid = pid;
         loop {
-            maybe_remove_dir_all(CP_DIR).unwrap();
-            create_dir_all(CP_DIR).unwrap();
+            // maybe_remove_dir_all(CP_DIR).unwrap();
+            // create_dir_all(CP_DIR).unwrap();
 
             let mut cp = Checkpointer::attach(pid as i32, CP_DIR.into()).unwrap();
             // cp.checkpoint().unwrap();
-            k_send.send(()).unwrap();
+            // k_send.send(()).unwrap();
 
             let r = cp.run(
                 Duration::from_secs_f64(KILL_TIME.start) / 2,
@@ -75,7 +75,7 @@ fn main() {
                 }
             };
             let restore_time = restore_start.elapsed();
-            writeln!(restore_output, "{},", restore_time.as_nanos()).unwrap();
+            write!(restore_output, "{},", restore_time.as_nanos()).unwrap();
 
             println!("[CP]: Restored {:?}", proc.id());
 
@@ -88,7 +88,7 @@ fn main() {
     let res = loop {
         thread::sleep(Duration::from_secs_f64(rng.gen_range(KILL_TIME)));
 
-        k_recv.recv().unwrap();
+        // k_recv.recv().unwrap();
         println!("[M]: Killing {}", proc.id());
         proc.kill().unwrap();
 
