@@ -17,7 +17,7 @@ use std::{
 
 const CP_DIR: &str = "cps";
 const OUTPUT_DIR: &str = "out/stress";
-const BIN: &str = "../target/release/examples/travelling_salesman";
+const BIN: &str = "../target/release/examples/markov";
 const KILL_TIME: Range<f64> = 0.5..1.;
 
 fn main() {
@@ -41,14 +41,23 @@ fn main() {
 
     let mut proc = Command::new(BIN).arg(&test_output_path).spawn().unwrap();
     let pid = proc.id();
+    
+    thread::sleep(Duration::from_secs_f64(0.5));
 
     let (p_send, p_recv) = channel();
+    let (k_send, k_recv) = channel();
     let restore_b = Arc::new(Barrier::new(2));
     let restore_b_ = restore_b.clone();
     thread::spawn(move || {
         let mut pid = pid;
         loop {
+            maybe_remove_dir_all(CP_DIR).unwrap();
+            create_dir_all(CP_DIR).unwrap();
+
             let mut cp = Checkpointer::attach(pid as i32, CP_DIR.into()).unwrap();
+            cp.checkpoint().unwrap();
+            k_send.send(()).unwrap();
+
             let r = cp.run(
                 Duration::from_secs_f64(KILL_TIME.start) / 2,
                 3,
@@ -70,6 +79,8 @@ fn main() {
             let restore_time = restore_start.elapsed();
             writeln!(restore_output, "{},", restore_time.as_nanos()).unwrap();
 
+            println!("[CP]: Restored {:?}", proc.id());
+
             pid = proc.id();
             p_send.send(proc).unwrap();
         }
@@ -79,6 +90,7 @@ fn main() {
     let res = loop {
         thread::sleep(Duration::from_secs_f64(rng.gen_range(KILL_TIME)));
 
+        k_recv.recv().unwrap();
         println!("[M]: Killing {}", proc.id());
         proc.kill().unwrap();
 
