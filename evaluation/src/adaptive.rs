@@ -16,7 +16,7 @@ const OVERHEAD: f64 = 0.1;
 fn main() {
     let bin_path = PathBuf::from(BIN);
     let bin_name = bin_path.file_name().unwrap().to_str().unwrap();
-    let output_dir = format!("{OUTPUT_DIR}/{bin_name}");
+    let output_dir = format!("{OUTPUT_DIR}/{bin_name}_{OVERHEAD}");
 
     maybe_remove_dir_all(CP_DIR).unwrap();
     maybe_remove_dir_all(&output_dir).unwrap();
