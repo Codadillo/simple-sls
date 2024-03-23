@@ -41,8 +41,6 @@ fn main() {
 
     let mut proc = Command::new(BIN).arg(&test_output_path).spawn().unwrap();
     let pid = proc.id();
-    
-    thread::sleep(Duration::from_secs_f64(0.5));
 
     let (p_send, p_recv) = channel();
     let (k_send, k_recv) = channel();
@@ -55,7 +53,7 @@ fn main() {
             create_dir_all(CP_DIR).unwrap();
 
             let mut cp = Checkpointer::attach(pid as i32, CP_DIR.into()).unwrap();
-            cp.checkpoint().unwrap();
+            // cp.checkpoint().unwrap();
             k_send.send(()).unwrap();
 
             let r = cp.run(
